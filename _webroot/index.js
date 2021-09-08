@@ -5,7 +5,7 @@ $(document).ready(function () {
   var currentDate = new Date();
 
   // Target future date/24 hour time/Timezone
-  var targetDate = moment.tz("2024-07-16 9:32", "Central");
+  var targetDate = moment.tz("2024-07-16T09:32:00", "America/Chicago");
 
   // Calculate the difference in seconds between the future and current date
   var diff = targetDate / 1000 - currentDate.getTime() / 1000;
@@ -29,20 +29,5 @@ $(document).ready(function () {
         },
       },
     });
-
-    // Check when timer reaches 0, then stop at 0
-    setTimeout(function () {
-      checktime();
-    }, 1000);
-
-    function checktime() {
-      t = clock.getTime();
-      if (t <= 0) {
-        clock.setTime(0);
-      }
-      setTimeout(function () {
-        checktime();
-      }, 1000);
-    }
   }
 });

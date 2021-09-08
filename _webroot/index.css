@@ -35,12 +35,12 @@ body {
 
 @media only screen and (max-width: 414px) {
   .pageContent {
-    background-size: 300%;
+    background-size: 250%;
   }
 
   .clock {
     width: 300px;
-    top: 57%;
+    top: 65%;
     left: 50%;
   }
 
