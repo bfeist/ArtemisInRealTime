@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "chrome",
+      "request": "attach",
+      "name": "Attach to Chrome",
+      "url": "http://127.0.0.1:3001/*",
+      "port": 9222,
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true,
+      "trace": true
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+body {
+  background: url(/img/virtual_backgrounds_-_astronaut_regolith.jpg);
+  background-repeat: no-repeat;
+  background-size: auto;
+}
+
+.clock {
+  width: 770px;
+  position: absolute;
+  top: 30%;
+  left: 55%;
+  transform: translateX(-50%) translateY(-50%);
+  color: white;
+}
+
+.flip-clock-label {
+  color: rgb(204, 204, 204) !important;
+  font-family: "Roboto Mono";
+  font-size: 1.7em;
+  right: -86px !important;
+  display: none;
+}
+
+.flip-clock-dot {
+  background-color: rgb(204, 204, 204) !important;
+}
