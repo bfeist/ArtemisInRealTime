@@ -1,4 +1,13 @@
+html,
 body {
+  margin: 0px;
+  background-color: black;
+}
+
+.pageContent {
+  width: 100vw;
+  height: 100vh;
+  background-color: black;
   background: url(/img/virtual_backgrounds_-_astronaut_regolith.jpg);
   background-repeat: no-repeat;
   background-size: auto;
@@ -10,7 +19,6 @@ body {
   top: 30%;
   left: 55%;
   transform: translateX(-50%) translateY(-50%);
-  color: white;
 }
 
 .flip-clock-label {
@@ -23,4 +31,21 @@ body {
 
 .flip-clock-dot {
   background-color: rgb(204, 204, 204) !important;
+}
+
+@media only screen and (max-width: 414px) {
+  .pageContent {
+    background-size: 300%;
+  }
+
+  .clock {
+    width: 300px;
+    top: 57%;
+    left: 50%;
+  }
+
+  .flip {
+    width: 50px !important;
+    height: 80px !important;
+  }
 }
