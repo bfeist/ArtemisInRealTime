@@ -5,7 +5,7 @@ $(document).ready(function () {
   var currentDate = new Date();
 
   // Target future date/24 hour time/Timezone
-  var targetDate = moment.tz("2024-07-16T09:32:00", "America/Chicago");
+  var targetDate = moment.tz("2026-02-06T00:00:00", "America/Chicago");
 
   // Calculate the difference in seconds between the future and current date
   var diff = targetDate / 1000 - currentDate.getTime() / 1000;

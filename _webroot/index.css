@@ -8,7 +8,8 @@ body {
   width: 100vw;
   height: 100vh;
   background-color: black;
-  background: url(/img/virtual_backgrounds_-_astronaut_regolith.jpg);
+  /* background: url(/img/virtual_backgrounds_-_astronaut_regolith.jpg); */
+  background: url(/img/virtual_backgrounds_-_large_moon_and_mars_0.webp);
   background-repeat: no-repeat;
   background-size: auto;
 }

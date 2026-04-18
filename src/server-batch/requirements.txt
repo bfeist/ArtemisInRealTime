@@ -1,0 +1,35 @@
+beautifulsoup4
+python-dotenv
+requests
+python-dateutil
+pydub
+rich
+tqdm
+numpy
+lxml
+yt-dlp
+google-api-python-client
+Pillow
+certifi
+setuptools<81
+
+# Transcription — pin to ISSiRT-tested versions
+whisperx==3.3.4
+webrtcvad
+faster-whisper==1.1.1
+ctranslate2==4.4.0
+pyannote-audio==3.3.2
+speechbrain==1.0.3
+matplotlib
+pytorch-lightning==2.5.1.post0
+lightning==2.5.1.post0
+
+# Extra index for CUDA wheels
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+charset-normalizer>=3.4.4
+
+# PyTorch >=2.6 for CVE-2025-32434 fix, <2.9 because torchaudio 2.9+ removed
+# AudioMetaData which pyannote-audio 3.x (used by whisperx) still requires.
+torch>=2.6.0,<2.9
+torchaudio>=2.6.0,<2.9

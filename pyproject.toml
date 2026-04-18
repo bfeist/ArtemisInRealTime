@@ -1,0 +1,26 @@
+[project]
+name = "artemis-ingest"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "requests",
+    "beautifulsoup4",
+    "lxml",
+    "python-dotenv",
+    "tqdm",
+    "yt-dlp",
+    "google-api-python-client",
+    "pydub",
+    "python-dateutil",
+]
+
+[project.optional-dependencies]
+transcription = [
+    "whisperx",
+    "torch",
+    "torchaudio",
+    "webrtcvad",
+]
+classification = [
+    "ollama",
+]
