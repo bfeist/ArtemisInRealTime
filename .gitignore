@@ -2,12 +2,25 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
-dist/
-build/
 .venv/
+
+# Node
+/node_modules
+/.pnp
+.pnp.js
+
+# Build
+/build
+**/dist
+.local
+
+# Testing
+/coverage
+/src/coverage
 
 # Environment
 .env
+.env.secret
 
 # OS
 .DS_Store
@@ -16,5 +29,17 @@ Thumbs.db
 # IDE
 .idea/
 
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
 # Data
 *.jsonl
+
+# MS Office temp files
+~$*

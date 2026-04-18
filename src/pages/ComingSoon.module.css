@@ -1,0 +1,117 @@
+.pageContent {
+  width: 100vw;
+  height: 100vh;
+  background-color: #000000;
+  background-image: url("/img/virtual_backgrounds_-_large_moon_and_mars_0.webp");
+  background-repeat: no-repeat;
+  background-size: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.comingSoon {
+  font-family: "Roboto Mono", monospace;
+  font-weight: 300;
+  font-size: 2.4rem;
+  color: #ffffff;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  text-align: center;
+  margin-bottom: 0.75rem;
+  text-shadow:
+    0 0 12px rgb(0 0 0 / 90%),
+    0 2px 8px rgb(0 0 0 / 80%),
+    0 0 30px rgb(0 0 0 / 60%);
+}
+
+.timerHeader {
+  font-family: "Roboto Mono", monospace;
+  font-weight: 300;
+  font-size: 1rem;
+  color: #dddddd;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  text-align: center;
+  margin-bottom: 1.5rem;
+  text-shadow:
+    0 0 10px rgb(0 0 0 / 90%),
+    0 2px 6px rgb(0 0 0 / 80%);
+}
+
+.countdown {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.countdownSegment {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.countdownValue {
+  font-family: "Roboto Mono", monospace;
+  font-weight: 700;
+  font-size: 3.5rem;
+  color: #ffffff;
+  background: rgb(0 0 0 / 60%);
+  padding: 0.3em 0.5em;
+  border-radius: 6px;
+  min-width: 2.2em;
+  text-align: center;
+}
+
+.countdownLabel {
+  font-family: "Roboto Mono", monospace;
+  font-weight: 300;
+  font-size: 0.85rem;
+  color: #cccccc;
+  margin-top: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  text-shadow:
+    0 0 10px rgb(0 0 0 / 90%),
+    0 2px 6px rgb(0 0 0 / 80%);
+}
+
+.separator {
+  font-family: "Roboto Mono", monospace;
+  font-weight: 700;
+  font-size: 3.5rem;
+  color: #cccccc;
+  padding-bottom: 1.8rem;
+}
+
+@media only screen and (width <= 414px) {
+  .pageContent {
+    background-size: 250%;
+  }
+
+  .comingSoon {
+    font-size: 1.4rem;
+    letter-spacing: 0.2em;
+  }
+
+  .countdown {
+    gap: 0.5rem;
+  }
+
+  .countdownValue {
+    font-size: 1.8rem;
+    padding: 0.2em 0.3em;
+    min-width: 1.8em;
+  }
+
+  .countdownLabel {
+    font-size: 0.65rem;
+  }
+
+  .separator {
+    font-size: 1.8rem;
+    padding-bottom: 1.4rem;
+  }
+}

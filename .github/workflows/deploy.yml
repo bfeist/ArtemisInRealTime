@@ -1,0 +1,74 @@
+name: Deploy React App
+
+on:
+  push:
+    branches:
+      - "**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code for tests
+        uses: actions/checkout@v4
+      - name: Setup Node.js for tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm run test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild native modules
+        run: npm rebuild
+
+      - name: Build the app
+        run: npm run build
+
+      - name: Deploy to DreamHost
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh-agent.sock
+          DREAMHOST_PRIVATE_KEY: "${{ secrets.DREAMHOST_PRIVATE_KEY }}"
+          DREAMHOST_HOST: "${{ vars.DREAMHOST_HOST }}"
+          DREAMHOST_USER: "${{ vars.DREAMHOST_USER }}"
+
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DREAMHOST_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          touch ~/.ssh/known_hosts
+          ssh-keyscan -H "$DREAMHOST_HOST" >> ~/.ssh/known_hosts
+
+          if [ "${GITHUB_REF}" == "refs/heads/prod" ]; then
+            DEPLOY_PATH="/home/dh_zbdmx3/artemisinrealtime.org"
+          else
+            DEPLOY_PATH="/home/dh_zbdmx3/dev.artemisinrealtime.org"
+          fi
+
+          ssh "$DREAMHOST_USER@$DREAMHOST_HOST" "mkdir -p $DEPLOY_PATH"
+
+          if [ -d .local/vite/dist ]; then
+            rsync -avz --delete .local/vite/dist/ "$DREAMHOST_USER@$DREAMHOST_HOST":"$DEPLOY_PATH"
+          else
+            echo "Error: .local/vite/dist directory is missing. Skipping deployment."
+            exit 1
+          fi
