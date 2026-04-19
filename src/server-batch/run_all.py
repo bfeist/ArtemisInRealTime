@@ -25,8 +25,6 @@ STEPS = [
     ("1c", "1_comm.1c_web_comm", "Produce web-ready comm JSON", {"artemis-ii"}),
     ("2a", "2_video.2a_ia_video_discover", "Discover IA video items", None),
     ("2b", "2_video.2b_ia_video_download", "Download IA video MP4s", None),
-    ("2c", "2_video.2c_io_search", "Search IO for NASA IDs", None),
-    ("2c2", "2_video.2c2_io_video_catalog", "Scrape IO video collections", None),
     ("2d", "2_video.2d_yt_metadata", "Fetch YouTube metadata", None),
     ("2e", "2_video.2e_yt_download", "Download YouTube videos", None),
     ("2g", "2_video.2g_web_video", "Produce web-ready video JSON", None),

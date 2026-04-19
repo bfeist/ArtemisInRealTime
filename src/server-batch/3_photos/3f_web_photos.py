@@ -25,6 +25,8 @@ from shared.io_api import load_jsonl
 def _build_io_date_lookup(mission: MissionConfig) -> dict[str, str]:
     """Build nasa_id → best available date from IO photo catalog.
 
+    Prefers second-precision datetimes from photo-datetime-overrides.json
+    (parsed from original filenames by step 3a3) over md_creation_date.
     Used to enrich dates for photos found on Flickr, images.nasa.gov,
     and IA stills that have a NASA ID but no precise timestamp.
     """
@@ -33,9 +35,19 @@ def _build_io_date_lookup(mission: MissionConfig) -> dict[str, str]:
     if io_photo_path.exists():
         for doc in load_jsonl(io_photo_path):
             nid = doc.get("nasa_id", "").lower()
-            date = doc.get("vmd_start_gmt") or doc.get("md_creation_date", "")
+            date = doc.get("md_creation_date", "")
             if nid and date:
                 lookup[nid] = date
+
+    # Override with second-precision datetimes from step 3a3 original-filename scrape
+    dt_overrides_path = mission.io_cache / "photo-datetime-overrides.json"
+    if dt_overrides_path.exists():
+        with open(dt_overrides_path, "r", encoding="utf-8") as f:
+            dt_overrides: dict[str, str] = json.load(f)
+        for nid, dt_str in dt_overrides.items():
+            if dt_str:
+                lookup[nid.lower()] = dt_str
+
     return lookup
 
 
@@ -47,17 +59,27 @@ def build_web_photos(mission: MissionConfig) -> None:
 
     # ── 1. IO Photo Catalog (authoritative source) ───────────────────────
     io_photo_path = mission.io_cache / "io_photo_catalog.jsonl"
+    # Load second-precision datetime overrides from step 3a3 original-filename scrape
+    dt_overrides_path = mission.io_cache / "photo-datetime-overrides.json"
+    dt_overrides: dict[str, str] = {}
+    if dt_overrides_path.exists():
+        with open(dt_overrides_path, "r", encoding="utf-8") as f:
+            dt_overrides = json.load(f)
+        print(f"  Loaded {sum(1 for v in dt_overrides.values() if v)} datetime overrides")
     io_count = 0
     if io_photo_path.exists():
         for doc in load_jsonl(io_photo_path):
             nasa_id = doc.get("nasa_id", "").lower()
             if not nasa_id:
                 continue
+            # Prefer second-precision datetime from original filename (step 3a3);
+            # fall back to md_creation_date (correct for jsc*/nhq*, ingestion date for art*)
+            date = dt_overrides.get(nasa_id) or doc.get("md_creation_date", "")
             photos[nasa_id] = {
                 "id": nasa_id,
                 "title": doc.get("md_title", ""),
                 "description": doc.get("description", "")[:500] if doc.get("description") else "",
-                "date": doc.get("vmd_start_gmt") or doc.get("md_creation_date", ""),
+                "date": date,
                 "source": "io",
                 "collections": [
                     c.split("/")[-1] if "/" in c else c

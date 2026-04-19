@@ -80,6 +80,31 @@ Aggregates per-file transcripts into a single chronologically-sorted JSON array.
 
 Strictly linear: **1a → 1b → 1c**. No external dependencies on other pipelines.
 
+## How to Run
+
+> ⚠️ This pipeline is **Artemis II only**. Artemis I was uncrewed — skip all steps.
+
+Run from `src/server-batch/`:
+
+```bash
+# Run all steps in order
+python run_all.py --mission artemis-ii
+
+# Run individual steps
+python run_all.py --mission artemis-ii --step 1a
+python run_all.py --mission artemis-ii --step 1b
+python run_all.py --mission artemis-ii --step 1c
+
+# Run steps directly (useful for flags like --force or --test)
+python -m 1_comm.1a_download_ia_zips --mission artemis-ii
+python -m 1_comm.1b_transcribe --mission artemis-ii
+python -m 1_comm.1b_transcribe --mission artemis-ii --test 5   # transcribe only 5 files
+python -m 1_comm.1b_transcribe --mission artemis-ii --force    # re-transcribe all
+python -m 1_comm.1c_web_comm --mission artemis-ii
+```
+
+**Required env vars:** `HF_TOKEN` (Hugging Face token for WhisperX diarization), GPU with CUDA for step 1b.
+
 ## Issues
 
 None — this pipeline is clean and straightforward.

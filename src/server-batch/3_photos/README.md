@@ -218,6 +218,36 @@ The regex in 3f only looks for `art\d+[me]\d+` and `jsc\d+[me]\d+` in Flickr pho
 
 ### 5. Minor: No `3c` (Flickr photo details) or `3d` (Flickr classification)
 
+## How to Run
+
+Run from `src/server-batch/`:
+
+```bash
+# Run all registered steps in order (works for both missions)
+python run_all.py --mission artemis-i
+python run_all.py --mission artemis-ii
+
+# Run individual steps via run_all.py
+python run_all.py --mission artemis-ii --step 3a
+python run_all.py --mission artemis-ii --step 3a2
+python run_all.py --mission artemis-ii --step 3b
+python run_all.py --mission artemis-ii --step 3e
+python run_all.py --mission artemis-ii --step 3f
+
+# Steps NOT in run_all.py — must be run directly
+python -m 3_photos.3a3_io_exif_scrape --mission artemis-ii   # slow: scrapes HTML pages
+python -m 3_photos.3e2_io_nhq_lookup --mission artemis-ii    # run after 3e
+
+# Then run 3f to merge everything
+python run_all.py --mission artemis-ii --step 3f
+
+# Same commands with artemis-i
+python run_all.py --mission artemis-i --step 3a2
+# ... etc
+```
+
+**Required env vars:** `FLICKR_API_KEY` (for step 3b), `IO_KEY` (for IO API steps).
+
 The PLANNING doc describes these steps but they don't exist as scripts. Currently 3b fetches album metadata with all photo extras in a single call, which may be sufficient. The AI classification step (3d) is also absent — all Flickr photos are included unclassified.
 
 ## Missing Steps from Planning Doc

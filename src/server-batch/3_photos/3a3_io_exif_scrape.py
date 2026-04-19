@@ -39,9 +39,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 IO_HOST = "https://io.jsc.nasa.gov"
 IO_INFO_URL = IO_HOST + "/app/info.cfm?pid={pid}"
 
-# Only scrape ground-photographer prefixes that need timezone correction.
-# art002e/art002a are onboard cameras already in UTC.
+# Ground-photographer prefixes — need timezone correction for md_creation_date.
 SCRAPE_PREFIXES = ("jsc", "nhq")
+
+# Regex to parse capture timestamp from original filenames like:
+#   cmaopnav_20221209175700.tiff  →  2022-12-09T17:57:00Z
+#   hd_cam_20221118081220.jpg     →  2022-11-18T08:12:20Z
+_ORIG_FILENAME_TS_RE = re.compile(r"_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})[_.]") 
 
 # Concurrency for scraping info pages
 CONCURRENCY = 10
@@ -154,6 +158,19 @@ KV_PATTERN = re.compile(
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
+def parse_original_filename_dt(filename: str) -> str | None:
+    """Parse a UTC datetime from an IO original filename.
+
+    Handles patterns like  cmaopnav_20221209175700.tiff  →  '2022-12-09T17:57:00Z'.
+    Returns None if no 14-digit timestamp is found.
+    """
+    m = _ORIG_FILENAME_TS_RE.search(filename + "_")  # ensure trailing delimiter
+    if not m:
+        return None
+    yr, mo, dy, hh, mm, ss = m.groups()
+    return f"{yr}-{mo}-{dy}T{hh}:{mm}:{ss}Z"
+
+
 def scrape_info_page(pid: str, nasa_id: str) -> dict:
     """Scrape EXIF metadata from an individual IO photo info page."""
     url = IO_INFO_URL.format(pid=pid)
@@ -173,6 +190,10 @@ def scrape_info_page(pid: str, nasa_id: str) -> dict:
             if val and val != "&nbsp;":
                 fields[key] = val
 
+        # PreservedFileName is the original camera filename (e.g. cmaopnav_20221209175700.tiff)
+        # It's already captured by KV_PATTERN in the EXIF table.
+        original_filename = fields.get("PreservedFileName")
+
         # Derive timezone offset from DigitalCreationTime (e.g. "17:06:20-07:00")
         dct = fields.get("DigitalCreationTime") or fields.get("TimeCreated")
         tz_offset = None
@@ -185,6 +206,7 @@ def scrape_info_page(pid: str, nasa_id: str) -> dict:
             "nasa_id": nasa_id,
             "pid": pid,
             "tz_offset": tz_offset,
+            "original_filename": original_filename,
             "exif": fields,
         }
     except Exception as e:
@@ -192,6 +214,7 @@ def scrape_info_page(pid: str, nasa_id: str) -> dict:
             "nasa_id": nasa_id,
             "pid": pid,
             "tz_offset": None,
+            "original_filename": None,
             "exif": None,
             "error": str(e),
         }
@@ -343,6 +366,75 @@ def scrape_io_exif(mission: MissionConfig) -> None:
     print(f"  Wrote {len(overrides)} overrides to {overrides_path}")
 
 
+def scrape_io_onboard_datetimes(mission: MissionConfig) -> None:
+    """Scrape Original Filename from IO info pages for onboard camera photos.
+
+    Reads io_photo_catalog.jsonl (all photos), skips ground-photographer prefixes
+    already handled by scrape_io_exif(), scrapes each photo's info page to extract
+    the Original Filename, parses the embedded UTC timestamp, and writes
+    photo-datetime-overrides.json: { nasa_id: "YYYY-MM-DDTHH:MM:SSZ" }.
+    """
+    catalog_path = mission.io_cache / "io_photo_catalog.jsonl"
+    if not catalog_path.exists():
+        print("  No io_photo_catalog.jsonl — run step 3a2 first.")
+        return
+
+    from shared.io_api import load_jsonl
+    all_docs = list(load_jsonl(catalog_path))
+    # Skip ground-photographer prefixes — their dates come from md_creation_date + TZ correction
+    onboard_docs = [
+        d for d in all_docs
+        if not any(d.get("nasa_id", "").startswith(pfx) for pfx in SCRAPE_PREFIXES)
+    ]
+    print(f"  Onboard photos to scrape: {len(onboard_docs)} "
+          f"(of {len(all_docs)} total in catalog)")
+
+    overrides_path = mission.io_cache / "photo-datetime-overrides.json"
+    existing: dict[str, str] = {}
+    if overrides_path.exists():
+        with open(overrides_path, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+        print(f"  Existing overrides: {len(existing)} entries (will resume)")
+
+    to_scrape = [d for d in onboard_docs if d["nasa_id"] not in existing]
+    print(f"  Need to scrape: {len(to_scrape)} new photos")
+
+    if to_scrape:
+        print(f"  Scraping {len(to_scrape)} info pages ({CONCURRENCY} concurrent)...")
+        scraped = parsed = 0
+        for i in range(0, len(to_scrape), CONCURRENCY):
+            batch = [
+                (str(d["id"]), d["nasa_id"])
+                for d in to_scrape[i:i + CONCURRENCY]
+            ]
+            results = scrape_batch(batch)
+            for r in results:
+                nid = r["nasa_id"]
+                orig = r.get("original_filename")
+                dt_str = parse_original_filename_dt(orig) if orig else None
+                existing[nid] = dt_str  # None means scraped but no parseable timestamp
+                if dt_str:
+                    parsed += 1
+            scraped += len(results)
+            pct = round(scraped / len(to_scrape) * 100)
+            print(f"\r    Progress: {scraped}/{len(to_scrape)} ({pct}%) — {parsed} timestamps parsed",
+                  end="", flush=True)
+            # Save incrementally every 500 photos for resume support
+            if scraped % 500 == 0:
+                _save_overrides(overrides_path, existing)
+        print()
+
+    _save_overrides(overrides_path, existing)
+    valid = sum(1 for v in existing.values() if v)
+    print(f"  Wrote {len(existing)} entries ({valid} with parsed timestamps) "
+          f"to {overrides_path}")
+
+
+def _save_overrides(path: Path, overrides: dict) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(dict(sorted(overrides.items())), f, indent=2, ensure_ascii=False)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Scrape IO EXIF metadata and generate timezone overrides"
@@ -350,13 +442,20 @@ def main():
     parser.add_argument(
         "--mission", required=True, choices=list(MISSIONS.keys()),
     )
+    parser.add_argument(
+        "--onboard-only", action="store_true",
+        help="Only scrape onboard camera datetimes (skip ground TZ correction)",
+    )
     args = parser.parse_args()
 
     mission = MISSIONS[args.mission]
     mission.ensure_dirs()
 
     print(f"\n=== Step 3a3: IO EXIF Scrape — {mission.name} ===\n")
-    scrape_io_exif(mission)
+    if not args.onboard_only:
+        scrape_io_exif(mission)
+    print()
+    scrape_io_onboard_datetimes(mission)
 
 
 if __name__ == "__main__":

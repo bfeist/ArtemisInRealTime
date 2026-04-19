@@ -1,22 +1,19 @@
-# Pipeline 2: Video (IA + IO + YouTube)
+# Pipeline 2: Video (IA + YouTube)
 
 ## Data Flow
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│  TWO INDEPENDENT DISCOVERY PATHS                                          │
-│                                                                            │
-│  Archive.org (IA)                          IO (Imagery Online)             │
-│      │                                         │                           │
-│      ▼                                         ▼                           │
-│  ┌─────────────────────┐              ┌─────────────────────┐              │
-│  │ 2a — IA Discover    │              │ 2c2 — IO Video      │              │
-│  │ Saves:              │              │ Catalog              │              │
-│  │  ia_video_catalog   │              │ Saves:               │              │
-│  │  .json              │              │  io_video_catalog    │              │
-│  └────────┬────────────┘              │  .jsonl              │              │
-│           │                           └──────────────────────┘              │
-│           │                              ⚠️ OUTPUT NOT CONSUMED            │
+│  Archive.org (IA)                                                          │
+│      │                                                                     │
+│      ▼                                                                     │
+│  ┌─────────────────────┐                                                   │
+│  │ 2a — IA Discover    │                                                   │
+│  │ Saves:              │                                                   │
+│  │  ia_video_catalog   │                                                   │
+│  │  .json              │                                                   │
+│  └────────┬────────────┘                                                   │
+│           │                                                                │
 │           ▼                                                                │
 │  ┌─────────────────────┐                                                   │
 │  │ 2b — IA Download    │                                                   │
@@ -29,15 +26,15 @@
 │           │                                                                │
 │           ▼                                                                │
 │  ┌─────────────────────┐                                                   │
-│  │ 2c — IO Search      │                                                   │
+│  │ 2f — IA Metadata    │                                                   │
 │  │ Reads:              │                                                   │
 │  │  ia_video_catalog   │                                                   │
 │  │  .json              │                                                   │
 │  │ Saves:              │                                                   │
-│  │  io_found.jsonl     │                                                   │
-│  │  io_notfound.jsonl  │                                                   │
-│  └─────────────────────┘                                                   │
-│                                                                            │
+│  │  ia_video_metadata  │                                                   │
+│  │  .json              │                                                   │
+│  └────────┬────────────┘                                                   │
+│           │                                                                │
 │  YouTube Data API                                                          │
 │      │                                                                     │
 │      ▼                                                                     │
@@ -49,19 +46,20 @@
 │                                       └─────────────────────┘              │
 └────────────────────────────────────────────────────────────────────────────┘
 
-               │ (2a, 2c, 2d all feed into 2g)
+               │ (2f and 2d feed into 2g)
                ▼
       ┌─────────────────────┐
       │ 2g — Web Video JSON │
       │ Reads:              │
-      │  ia_video_catalog   │  (from 2a)
-      │  io_found.jsonl     │  (from 2c)
-      │  yt_metadata.json   │  (from 2d)
+      │  ia_video_metadata  │  (from 2f — timestamps parsed from filenames)
+      │  .json              │
+      │  yt_metadata.json   │  (from 2d — actualStartTime from YouTube API)
       │ Saves:              │
       │  web/videoIA.json   │
       │  web/videoYt.json   │
       └─────────────────────┘
 ```
+
 
 ## Step Details
 
@@ -91,29 +89,25 @@ Saves a list of IA item metadata (identifier, title, date, mediatype, etc).
 
 For each IA item, fetches its file list via metadata API, picks the best MP4 (prefers `.ia.mp4` low-res derivative), and downloads it.
 
-### 2c: IO Search (`2c_io_search.py`)
+### 2f: IA Video Metadata (`2f_ia_video_metadata.py`)
 
-|                |                                                          |
-| -------------- | -------------------------------------------------------- |
-| **Input**      | `processed/ia_video_catalog.json` (from 2a)              |
-| **Output**     | `processed/io_cache/io_found.jsonl`, `io_notfound.jsonl` |
-| **Idempotent** | Yes — skips items already in found/notfound JSONL files  |
+|                |                                                                           |
+| -------------- | ------------------------------------------------------------------------- |
+| **Input**      | `processed/ia_video_catalog.json` (from 2a), IA Metadata API              |
+| **Output**     | `processed/ia_video_metadata.json`                                        |
+| **Idempotent** | Yes — resumable, skips identifiers already present in the output file     |
 
-For each IA video item, extracts a NASA ID from the IA identifier using regex patterns (e.g. `jsc2026m000052`), then searches IO API for that keyword. Saves the IO doc (with `vmd_start_gmt` broadcast timestamp) or marks it as not found.
+Produces a `yt_metadata.json`-equivalent for IA videos. For each catalog item:
 
-**Purpose**: Get accurate broadcast timestamps for IA videos. Without this, IA videos have no reliable timeline placement.
+1. **Parses a precise UTC timestamp** from the identifier using known NASA naming patterns:
+   - **ART-DL resource reels**: `<Subject>_ART-DL-<CamN>_<YYYY>_<DOY>_<HHMM>_<SS><MMM>_<AssetID>` — encodes year, day-of-year, and HH:MM:SS UTC directly in the filename (e.g. `_2022_341_0755_30000` → 2022-12-07T07:55:30Z)
+   - **YYMMDD suffix**: `_221128` or `_221128_AssetID` — date-only resolution
+   - **KSC prefix**: `KSC-YYYYMMDD-` — date-only resolution
+   - **Fallback**: IA item `date` metadata field
+2. **Fetches IA item metadata** for title, description, and duration.
+3. **Matches the downloaded local file** in `raw/video/ia/` by identifier glob.
 
-### 2c2: IO Video Catalog (`2c2_io_video_catalog.py`)
-
-|                |                                             |
-| -------------- | ------------------------------------------- |
-| **Input**      | IO API (collection CID from config)         |
-| **Output**     | `processed/io_cache/io_video_catalog.jsonl` |
-| **Idempotent** | Overwrites output each run                  |
-
-Fetches ALL video docs from IO's flight collections under the parent CID (e.g. 2,418 videos for Artemis II). Uses `cols=` and `as=2` (video asset type) parameters.
-
-**Purpose**: Build a comprehensive catalog of all NASA flight video, including videos that may not be on IA.
+Output fields per entry: `identifier`, `title`, `description`, `recorded_at`, `date_source`, `duration`, `source_url`, `filename`, and (for ART-DL items) `subject`, `camera`, `asset_id`.
 
 ### 2d: YouTube Metadata (`2d_yt_metadata.py`)
 
@@ -139,106 +133,72 @@ Downloads YouTube videos to a separate drive (H: by default). Uses Firefox cooki
 
 ### 2g: Web Video JSON (`2g_web_video.py`)
 
-|                |                                                                                                                                    |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Input**      | `processed/ia_video_catalog.json` (from 2a), `processed/io_cache/io_found.jsonl` (from 2c), `processed/yt_metadata.json` (from 2d) |
-| **Output**     | `web/videoIA.json`, `web/videoYt.json`                                                                                             |
-| **Idempotent** | Overwrites output each run                                                                                                         |
+|                |                                                                                              |
+| -------------- | -------------------------------------------------------------------------------------------- |
+| **Input**      | `processed/ia_video_metadata.json` (from 2f), `processed/yt_metadata.json` (from 2d)        |
+| **Output**     | `web/videoIA.json`, `web/videoYt.json`                                                       |
+| **Idempotent** | Overwrites output each run                                                                   |
 
-Merges IA video metadata with IO timestamps and produces web-ready JSON. YouTube videos get their own output file.
+Produces web-ready JSON from IA and YouTube metadata. IA timestamps come directly from `recorded_at` parsed in step 2f. YouTube timestamps come from `actualStartTime`/`actualEndTime` returned by the YouTube Data API.
 
 ## Dependency Order
 
 ```
 2a ─────────────┬──▶ 2b (needs ia_video_catalog.json)
+                │         │
+                │         └──▶ 2f (needs ia_video_catalog.json + raw/video/ia/)
                 │
-                ├──▶ 2c (needs ia_video_catalog.json)
-                │
-                └──▶ 2g (needs ia_video_catalog.json)
+                └──▶ (2f and 2d can run in parallel after 2b)
 
-2c ────────────────▶ 2g (needs io_found.jsonl)
-
-2c2 ───────────────▶ (NOTHING — output orphaned)
+2f ────────────────▶ 2g (needs ia_video_metadata.json)
 
 2d ─────────────┬──▶ 2e (needs yt_metadata.json)
                 │
                 └──▶ 2g (needs yt_metadata.json)
 ```
 
-**Minimum order**: `2a` → `2b` + `2c` + `2d` (parallel OK) → `2e` → `2g`
+**Minimum order**: `2a` → `2b` → `2f` + `2d` (parallel OK) → `2e` → `2g`
 
-**2c2 can run anytime** but its output is never consumed.
+## How to Run
+
+Run from `src/server-batch/`:
+
+```bash
+# Run all steps in order (works for both missions)
+python run_all.py --mission artemis-i
+python run_all.py --mission artemis-ii
+
+# Run individual steps
+python run_all.py --mission artemis-ii --step 2a
+python run_all.py --mission artemis-ii --step 2b
+python run_all.py --mission artemis-ii --step 2f
+python run_all.py --mission artemis-ii --step 2d
+python run_all.py --mission artemis-ii --step 2e
+python run_all.py --mission artemis-ii --step 2g
+
+# Run steps directly
+python -m 2_video.2a_ia_video_discover --mission artemis-ii
+python -m 2_video.2b_ia_video_download --mission artemis-ii
+python -m 2_video.2f_ia_video_metadata --mission artemis-ii
+python -m 2_video.2d_yt_metadata --mission artemis-ii
+python -m 2_video.2e_yt_download --mission artemis-ii
+python -m 2_video.2g_web_video --mission artemis-ii
+
+# Same commands with artemis-i
+python run_all.py --mission artemis-i --step 2a
+# ... etc
+```
+
+**Required env vars:** `YOUTUBE_API_KEY` (for step 2d). Steps 2e requires `yt-dlp` and Firefox cookies.
 
 ## Assets Saved (What Can Be Skipped on Re-run)
 
-| File                                        | Produced by | Consumed by | Re-run cost              |
-| ------------------------------------------- | ----------- | ----------- | ------------------------ |
-| `processed/ia_video_catalog.json`           | 2a          | 2b, 2c, 2g  | Low (API calls)          |
-| `raw/video/ia/*.mp4`                        | 2b          | (frontend)  | **High** (GB downloads)  |
-| `processed/io_cache/io_found.jsonl`         | 2c          | 2g          | Medium (per-item IO API) |
-| `processed/io_cache/io_notfound.jsonl`      | 2c          | (reference) | Medium                   |
-| `processed/io_cache/io_video_catalog.jsonl` | 2c2         | **NOTHING** | Medium                   |
-| `processed/yt_metadata.json`                | 2d          | 2e, 2g      | Low (YT API)             |
-| `YT_VIDEO_DIR/{mission}/*.mp4`              | 2e          | (frontend)  | **High** (GB downloads)  |
-| `web/videoIA.json`                          | 2g          | (frontend)  | Instant                  |
-| `web/videoYt.json`                          | 2g          | (frontend)  | Instant                  |
-
-## Issues Found
-
-### 1. ⚠️ `io_video_catalog.jsonl` (2c2) is never consumed
-
-Step 2c2 scrapes all 2,418 IO flight videos, but `2g_web_video.py` only reads:
-
-- `ia_video_catalog.json` (from 2a) — IA items
-- `io_found.jsonl` (from 2c) — per-item IO lookups
-- `yt_metadata.json` (from 2d) — YouTube
-
-The IO video catalog — the most comprehensive source of flight video — is produced but never used. This means **any video in IO that isn't also on Archive.org is invisible to the frontend**.
-
-### 2. ⚠️ 2c and 2c2 do redundant IO queries
-
-**2c** iterates through IA video items one by one, extracting NASA IDs and searching IO for each. **2c2** does a single bulk scrape of the same IO collection. The bulk scrape from 2c2 already contains all the data that 2c is searching for individually, plus videos that aren't on IA at all.
-
-Running both means:
-
-- 2c2 fetches ~2,418 docs in ~5 paginated requests
-- 2c then does ~25+ individual IO API calls for the same data
-
-### 3. 🔴 `2g_web_video.py` IO matching is fragile
-
-The IO lookup in `build_web_video_ia()` does a substring match:
-
-```python
-for nid, doc in io_lookup.items():
-    if nid in identifier.lower():
-        io_doc = doc
-        break
-```
-
-This iterates the entire lookup dict for every IA item and matches on substring containment, which could produce false positives (e.g. `jsc2026m000052` matching `jsc2026m0000521`). It also breaks on the `first` match arbitrarily.
-
-## Recommended Refactoring
-
-### Option A: Merge 2c into 2c2 (eliminate per-item IO lookups)
-
-1. Run 2c2 first to get the full IO video catalog
-2. Replace 2c with a local cross-reference script that matches IA identifiers against the IO catalog using NASA ID regex — no API calls needed
-3. Have 2g read `io_video_catalog.jsonl` directly and match by nasa_id
-
-### Option B: Make 2g consume io_video_catalog.jsonl
-
-If you want to keep both scripts:
-
-1. Have 2g also read `io_video_catalog.jsonl`
-2. Include IO-only videos (not on IA) in the web output
-3. This gives the frontend access to all 2,418 IO videos, not just the ~25 IA items
-
-### Recommended approach: Option A
-
-Merge 2c and 2c2 into a single step that:
-
-1. Fetches the full IO video catalog (bulk, paginated)
-2. Cross-references IA items against the catalog locally (no per-item API calls)
-3. Outputs both `io_video_catalog.jsonl` (full catalog) and enriched IA metadata
-
-This eliminates redundant API calls and produces a more comprehensive dataset.
+| File                                        | Produced by | Consumed by       | Re-run cost              |
+| ------------------------------------------- | ----------- | ----------------- | ------------------------ |
+| `processed/ia_video_catalog.json`           | 2a          | 2b, 2f            | Low (API calls)          |
+| `raw/video/ia/*.mp4`                        | 2b          | 2f, (frontend)    | **High** (GB downloads)  |
+| `processed/ia_video_metadata.json`          | 2f          | 2g                | Low (IA metadata API)    |
+| `processed/yt_metadata.json`                | 2d          | 2e, 2g            | Low (YT API)             |
+| `YT_VIDEO_DIR/{mission}/*.mp4`              | 2e          | (frontend)        | **High** (GB downloads)  |
+| `web/videoIA.json`                          | 2g          | (frontend)        | Instant                  |
+| `web/videoYt.json`                          | 2g          | (frontend)        | Instant                  |
