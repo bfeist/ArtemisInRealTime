@@ -1,4 +1,4 @@
-# Pipeline 1: Communications (Audio) — Artemis II Only
+![alt text](image.png)# Pipeline 1: Communications (Audio) — Artemis II Only
 
 Artemis I was uncrewed — this entire pipeline is skipped for `artemis-i`.
 

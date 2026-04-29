@@ -26,11 +26,13 @@ from config import MISSIONS, MissionConfig
 
 # WAV filename pattern:
 # 0000000000_1_OE_Comp_1_2026-04-01_12_42_51_by_ui_startdate_asc.wav
+# 0000000000_1_OE_Comp_1_2026-04-06_23_55_51_by_ui_startdate_desc.wav
 WAV_PATTERN = re.compile(
     r"^\d+_\d+_OE_Comp_\d+_"
     r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})_"
-    r"(?P<hour>\d{2})_(?P<minute>\d{2})_(?P<second>\d{2})_"
-    r"by_ui_startdate_asc\.wav$"
+    r"(?P<hour>\d{2})_(?P<minute>\d{2})_(?P<second>\d{2})"
+    r"(?:_by_\w+)?\.wav$",
+    re.IGNORECASE,
 )
 
 # Known hallucination strings to filter out

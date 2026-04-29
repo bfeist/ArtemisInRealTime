@@ -24,9 +24,21 @@ def scrape_photo_collections(mission: MissionConfig) -> None:
     print(f"  Scraping IO photos under parent CID {mission.io_parent_cid}")
     docs = search_io_collection(mission.io_parent_cid, asset_type=1)
 
+    # Deduplicate by nasa_id — the Solr query returns one doc per collection
+    # membership, so a photo in 33 sub-collections appears 33 times.
+    seen: set[str] = set()
+    unique_docs = []
+    for doc in docs:
+        nid = doc.get("nasa_id", "")
+        if nid not in seen:
+            seen.add(nid)
+            unique_docs.append(doc)
+    if len(docs) != len(unique_docs):
+        print(f"  Deduplicated: {len(docs)} → {len(unique_docs)} unique photos")
+
     out_path = mission.io_cache / "io_photo_catalog.jsonl"
-    save_jsonl(out_path, docs)
-    print(f"\n  Saved {len(docs)} photo docs to {out_path}")
+    save_jsonl(out_path, unique_docs)
+    print(f"\n  Saved {len(unique_docs)} photo docs to {out_path}")
 
 
 def main():
