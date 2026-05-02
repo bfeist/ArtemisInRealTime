@@ -1,0 +1,40 @@
+.page {
+  padding: 1.5rem;
+  font-family: sans-serif;
+}
+
+.heading {
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.status {
+  margin-bottom: 1rem;
+  color: #888888;
+  font-size: 0.9rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 6px;
+}
+
+.thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+  border-radius: 3px;
+  background: #222222;
+}
+
+.thumbLink {
+  display: block;
+  overflow: hidden;
+  border-radius: 3px;
+}
+
+.thumbLink:hover .thumb {
+  opacity: 0.8;
+}
