@@ -10,9 +10,9 @@ IO is the **authoritative source** for "when did this happen?" — its `vmd_star
 
 ## Three Different IO Data Products
 
-We gather three separate things from IO. They serve different purposes:
+Three IO data products feed the pipeline — one is currently built; the other two are planned for the video pipeline:
 
-### 1. IO Cross-Reference Search (`io_found.jsonl` / `io_notfound.jsonl`) — Step 2c
+### 1. IO Cross-Reference Search (`io_found.jsonl` / `io_notfound.jsonl`) — Step 2c _(planned — not yet built)_
 
 **Purpose**: Look up IA video items in IO to get accurate broadcast timestamps.
 
@@ -28,13 +28,13 @@ We gather three separate things from IO. They serve different purposes:
 | Mission    | Found in IO | Not Found | Total IA Items |
 | ---------- | ----------- | --------- | -------------- |
 | Artemis I  | 14          | 73        | 87             |
-| Artemis II | 10          | 8         | 18             |
+| Artemis II | —           | —         | 25+            |
 
 The "not found" items are typically IA uploads that used non-standard identifiers, composite/highlight reels that don't map to a single IO record, or items uploaded before IO cataloged them.
 
 ---
 
-### 2. IO Video Catalog (`io_video_catalog.jsonl`) — Step 2c2
+### 2. IO Video Catalog (`io_video_catalog.jsonl`) — Step 2c2 _(planned — not yet built)_
 
 **Purpose**: Get the **complete catalog** of all flight video in IO's collection — not just the ones that match IA uploads.
 
@@ -93,6 +93,8 @@ Internet Archive           IO (Imagery Online)              Public Sources
 - **io_found** = "which of our IA videos did we find in IO?" (timestamp enrichment for IA items)
 - **io_video_catalog** = "what is every video IO knows about for this mission?" (comprehensive inventory)
 - **io_photo_catalog** = "what is every photo IO knows about for this mission?" (comprehensive inventory)
+
+_Note: only `io_photo_catalog` is currently produced on disk. Steps 2c (`io_found`/`io_notfound`) and 2c2 (`io_video_catalog`) are planned but the scripts have not been written yet._
 
 The cross-reference search (step 2c) is a targeted lookup. The catalogs (steps 2c2, 3a2) are bulk scrapes of the entire collection. They answer different questions.
 

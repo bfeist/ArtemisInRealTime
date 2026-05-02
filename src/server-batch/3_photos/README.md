@@ -42,11 +42,28 @@
 │                         └──────────────┘                                        │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
-       ALL SOURCES ──────────▶ ┌──────────────────────┐
-                               │ 3f — Web Photos JSON │
-                               │ Reads: ALL of above  │
-                               │ Saves: web/photos.json│
-                               └──────────────────────┘
+  ┌──────────────────────────────────────────────────────────┐
+  │  ALL SOURCES                                             │
+  │                                                          │
+  │  3f — Download Photo Originals                          │
+  │  Saves: PHOTO_ASSETS_DIR/{mission}/nasa_orig/*.jpg       │
+  │         PHOTO_ASSETS_DIR/{mission}/flickr_orig/*.jpg     │
+  └──────────────────────┬───────────────────────────────────┘
+                         │
+                         ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  3f2 — Extract Photo EXIF Datetimes                     │
+  │  Reads: nasa_orig/ + flickr_orig/ (DateTimeOriginal +   │
+  │         OffsetTimeOriginal EXIF tags)                    │
+  │  Saves: processed/io_cache/photo-exif-datetimes.json    │
+  └──────────────────────┬───────────────────────────────────┘
+                         │
+                         ▼
+               ┌──────────────────────┐
+               │ 3g — Web Photos JSON │
+               │ Reads: ALL of above  │
+               │ Saves: web/photos.json│
+               └──────────────────────┘
 ```
 
 ## Step Details
@@ -129,7 +146,30 @@ Searches `images-api.nasa.gov` for mission-related photos. Paginates through all
 
 images.nasa.gov only stores day-precision dates for NHQ (NASA HQ) photos. This script looks up each NHQ photo in IO to get second-precision `md_creation_date`. Only processes photos with `NHQ` prefix.
 
-### 3f: Web Photos JSON (`3f_web_photos.py`)
+### 3f: Download Photo Originals (`3f_download_photos.py`)
+
+|                |                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------ |
+| **Input**      | `raw/photos/flickr/album_metadata.json` (3b), `raw/photos/images_nasa_gov/catalog.json` (3e)     |
+| **Output**     | `PHOTO_ASSETS_DIR/{mission}/flickr_orig/*.{ext}`, `PHOTO_ASSETS_DIR/{mission}/nasa_orig/*.{ext}` |
+| **Idempotent** | Yes — skips files already on disk                                                                |
+
+Downloads full-resolution originals from Flickr (`url_o`) and images.nasa.gov (`~orig` asset).
+
+### 3f2: Extract Photo EXIF Datetimes (`3f2_extract_photo_exif.py`)
+
+|                |                                                                   |
+| -------------- | ----------------------------------------------------------------- |
+| **Input**      | `PHOTO_ASSETS_DIR/{mission}/nasa_orig/`, `flickr_orig/` (from 3f) |
+| **Validation** | `processed/io_cache/io_photo_catalog.jsonl` (from 3a2)            |
+| **Output**     | `processed/io_cache/photo-exif-datetimes.json`                    |
+| **Idempotent** | Overwrites output each run                                        |
+
+Reads `DateTimeOriginal` and `OffsetTimeOriginal` EXIF tags from every downloaded photo, converts to true UTC, and writes the result as `{ nasa_id: "YYYY-MM-DDTHH:MM:SSZ" }`. Only photos that have an offset tag are written — photos without an offset fall back to the existing `photo-time-overrides.json` TZ-correction logic.
+
+**Validates against IO catalog:** confirms that IO stores ground-photographer local time verbatim as UTC. For Artemis II, 796/835 overlapping photos (95%) show this discrepancy — e.g. a photo taken at `21:21:15 -05:00` local appears as `21:21:15Z` in IO instead of the correct `02:21:15Z`.
+
+### 3g: Web Photos JSON (`3g_web_photos.py`)
 
 |                |                            |
 | -------------- | -------------------------- |
@@ -137,64 +177,71 @@ images.nasa.gov only stores day-precision dates for NHQ (NASA HQ) photos. This s
 | **Output**     | `web/photos.json`          |
 | **Idempotent** | Overwrites output each run |
 
-Merges five data sources with deduplication by nasa_id:
+Merges all data sources with deduplication by nasa_id. Date priority (highest wins):
 
-1. **IO photo catalog** (from 3a2) — authoritative, provides timestamps
+1. **IO photo catalog** (from 3a2) — authoritative base; `md_creation_date` is local time stored as UTC for ground photographers
 2. **IA stills** (from 3a) — only adds photos not already in IO
 3. **images.nasa.gov** (from 3e) — adds public URLs, creates entries for photos not in IO
 4. **IO NHQ date enrichment** (from 3e2) — replaces day-precision dates with second-precision
 5. **Flickr** (from 3b) — tries to match by NASA ID in title, otherwise adds as flickr-only entries
-6. **Timezone corrections** (from 3a3) — applies tz offset to correct ground photographer timestamps
+6. **Timezone corrections** (from 3a3) — applies tz offset to correct ground photographer timestamps from IO
+7. **EXIF UTC datetimes** (from 3f2) — highest priority; true UTC from `DateTimeOriginal + OffsetTimeOriginal` in the actual downloaded file; overrides everything above
 
 ## Dependency Graph
 
 ```
-3a  ──────────────────────────────────────────▶ 3f
-3a2 ──────────────────────────────────────────▶ 3f
-3a3 ──────────────────────────────────────────▶ 3f  (⚠️ not in run_all.py)
-3b  ──────────────────────────────────────────▶ 3f
-3e  ─────────────┬────────────────────────────▶ 3f
-                 └──▶ 3e2 ───────────────────▶ 3f  (⚠️ not in run_all.py)
+3a  ──────────────────────────────────────────────────────▶ 3g
+3a2 ──────────────────────────────────────────────────────▶ 3g
+3a3 ──────────────────────────────────────────────────────▶ 3g
+3b  ─────────────┬────────────────────────────────────────▶ 3g
+                 └──▶ 3f ──▶ 3f2 ──────────────────────▶ 3g
+3e  ─────────────┬────────────────────────────────────────▶ 3g
+                 ├──▶ 3e2 ─────────────────────────────▶ 3g
+                 └──▶ 3f ──▶ 3f2 ──────────────────────▶ 3g
 ```
 
 **3a, 3a2, 3a3, 3b, 3e** can all run in parallel — they have no interdependencies.
 
 **3e2 depends on 3e** (needs the images.nasa.gov catalog to know which NHQ IDs to look up).
 
-**3f depends on all of them** — it's the final merge step.
+**3f depends on 3b and 3e** (needs their catalogs to know what to download).
+
+**3f2 depends on 3f** (reads the downloaded files).
+
+**3g depends on all of them** — it's the final merge step.
 
 ### Minimum execution order:
 
 ```
 Parallel: 3a, 3a2, 3a3, 3b, 3e
-Then:     3e2 (after 3e)
-Finally:  3f  (after everything)
+Then:     3e2 (after 3e), 3f (after 3b + 3e)
+Then:     3f2 (after 3f)
+Finally:  3g  (after everything)
 ```
 
 ## Assets Saved
 
-| File                                              | Produced by | Consumed by        | Re-run cost                            |
-| ------------------------------------------------- | ----------- | ------------------ | -------------------------------------- |
-| `raw/photos/ia_stills/*.jpg`                      | 3a          | 3f                 | Medium (downloads)                     |
-| `processed/io_cache/io_photo_catalog.jsonl`       | 3a2         | 3f                 | Medium (IO API, 24K+ docs)             |
-| `processed/io_cache/photo-exif-metadata.json`     | 3a3         | 3f (via overrides) | **High** (scrapes 1000s of HTML pages) |
-| `processed/io_cache/photo-time-overrides.json`    | 3a3         | 3f                 | Derived from above                     |
-| `raw/photos/flickr/album_metadata.json`           | 3b          | 3f                 | Low (single API call)                  |
-| `raw/photos/images_nasa_gov/catalog.json`         | 3e          | 3e2, 3f            | Low (public API)                       |
-| `processed/io_cache/io_nhq_photos_found.jsonl`    | 3e2         | 3f                 | Medium (per-item IO API)               |
-| `processed/io_cache/io_nhq_photos_notfound.jsonl` | 3e2         | (reference)        | Medium                                 |
-| `web/photos.json`                                 | 3f          | (frontend)         | Instant                                |
+| File                                               | Produced by | Consumed by        | Re-run cost                            |
+| -------------------------------------------------- | ----------- | ------------------ | -------------------------------------- |
+| `raw/photos/ia_stills/*.jpg`                       | 3a          | 3g                 | Medium (downloads)                     |
+| `processed/io_cache/io_photo_catalog.jsonl`        | 3a2         | 3g, 3f2 (validate) | Medium (IO API, 24K+ docs)             |
+| `processed/io_cache/io_photo_exif.jsonl`           | 3a3         | 3a3 (cache)        | **High** (scrapes 1000s of HTML pages) |
+| `processed/io_cache/photo-time-overrides.json`     | 3a3         | 3g                 | Derived from above                     |
+| `processed/io_cache/photo-datetime-overrides.json` | 3a3         | 3g                 | Onboard camera absolute datetimes      |
+| `raw/photos/flickr/album_metadata.json`            | 3b          | 3f, 3g             | Low (single API call)                  |
+| `raw/photos/images_nasa_gov/catalog.json`          | 3e          | 3e2, 3f, 3g        | Low (public API)                       |
+| `processed/io_cache/io_nhq_photos_found.jsonl`     | 3e2         | 3g                 | Medium (per-item IO API)               |
+| `processed/io_cache/io_nhq_photos_notfound.jsonl`  | 3e2         | (reference)        | Medium                                 |
+| `PHOTO_ASSETS_DIR/{mission}/nasa_orig/`            | 3f          | 3f2                | High (large file downloads)            |
+| `PHOTO_ASSETS_DIR/{mission}/flickr_orig/`          | 3f          | 3f2                | High (large file downloads)            |
+| `processed/io_cache/photo-exif-datetimes.json`     | 3f2         | 3g                 | Fast (reads local files)               |
+| `web/photos.json`                                  | 3g          | (frontend)         | Instant                                |
 
 ## Issues Found
 
-### 1. 🔴 Steps 3a3 and 3e2 are not registered in `run_all.py`
+### 1. ✅ Steps 3a3 and 3e2 are registered in `run_all.py`
 
-Both scripts exist and are consumed by 3f, but they're missing from the STEPS list in `run_all.py`. Running `python run_all.py --mission artemis-ii` skips them entirely. You'd need to run them manually:
-
-```
-python -m 3_photos.3a3_io_exif_scrape --mission artemis-ii
-python -m 3_photos.3e2_io_nhq_lookup --mission artemis-ii
-```
+Both scripts are included in the STEPS list in `run_all.py` and run as part of the normal pipeline. Note that 3a3 is slow (scrapes HTML pages) and 3e2 depends on 3e.
 
 ### 2. ⚠️ 3a3 does its own IO query independent of 3a2
 
@@ -230,16 +277,15 @@ python run_all.py --mission artemis-ii
 # Run individual steps via run_all.py
 python run_all.py --mission artemis-ii --step 3a
 python run_all.py --mission artemis-ii --step 3a2
+python run_all.py --mission artemis-ii --step 3a3   # slow: scrapes HTML pages
 python run_all.py --mission artemis-ii --step 3b
 python run_all.py --mission artemis-ii --step 3e
-python run_all.py --mission artemis-ii --step 3f
+python run_all.py --mission artemis-ii --step 3e2   # run after 3e
+python run_all.py --mission artemis-ii --step 3f    # download originals (after 3b + 3e)
+python run_all.py --mission artemis-ii --step 3f2   # extract EXIF datetimes (after 3f)
 
-# Steps NOT in run_all.py — must be run directly
-python -m 3_photos.3a3_io_exif_scrape --mission artemis-ii   # slow: scrapes HTML pages
-python -m 3_photos.3e2_io_nhq_lookup --mission artemis-ii    # run after 3e
-
-# Then run 3f to merge everything
-python run_all.py --mission artemis-ii --step 3f
+# Then run 3g to merge everything
+python run_all.py --mission artemis-ii --step 3g
 
 # Same commands with artemis-i
 python run_all.py --mission artemis-i --step 3a2
@@ -252,9 +298,10 @@ The PLANNING doc describes these steps but they don't exist as scripts. Currentl
 
 ## Missing Steps from Planning Doc
 
-| Planned Step                  | Status                        | Impact                                |
-| ----------------------------- | ----------------------------- | ------------------------------------- |
-| 3c — Flickr photo details     | Not implemented               | Not needed — 3b fetches extras inline |
-| 3d — Flickr AI classification | Not implemented               | All Flickr photos included unfiltered |
-| 3e2 — IO NHQ lookup           | Implemented but not in runner | Must be run manually                  |
-| 3a3 — IO EXIF scrape          | Implemented but not in runner | Must be run manually                  |
+| Planned Step                  | Status                       | Impact                                 |
+| ----------------------------- | ---------------------------- | -------------------------------------- |
+| 3c — Flickr photo details     | Not implemented              | Not needed — 3b fetches extras inline  |
+| 3d — Flickr AI classification | Not implemented              | All Flickr photos included unfiltered  |
+| 3e2 — IO NHQ lookup           | Implemented, in `run_all.py` | Run after step 3e                      |
+| 3a3 — IO EXIF scrape          | Implemented, in `run_all.py` | Slow — scrapes HTML pages              |
+| 3f2 — EXIF datetime extract   | Implemented, in `run_all.py` | Run after step 3f (download originals) |

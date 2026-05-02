@@ -5,11 +5,14 @@ IO (Imagery Online at io.jsc.nasa.gov) often has the same photos with
 second-precision creation dates.
 
 This script reads the images.nasa.gov catalog, extracts NHQ NASA IDs,
-and looks each one up in IO via keyword search.
+and looks each one up — first in io_photo_catalog.jsonl, then via the IO
+API if not already cached. New API results are appended to io_photo_catalog.jsonl.
 
 Reads:    {data_dir}/{mission}/raw/photos/images_nasa_gov/catalog.json
+          {data_dir}/{mission}/processed/io_cache/io_photo_catalog.jsonl
 Produces: {data_dir}/{mission}/processed/io_cache/io_nhq_photos_found.jsonl
           {data_dir}/{mission}/processed/io_cache/io_nhq_photos_notfound.jsonl
+          (also appends to io_photo_catalog.jsonl for newly queried docs)
 """
 
 import argparse
@@ -44,7 +47,14 @@ def lookup_nhq_in_io(mission: MissionConfig) -> None:
     found_path = mission.io_cache / "io_nhq_photos_found.jsonl"
     notfound_path = mission.io_cache / "io_nhq_photos_notfound.jsonl"
 
-    # Load already-processed IDs to skip
+    # Load IO photo catalog for fast pre-lookup (avoids redundant API calls).
+    io_catalog_path = mission.io_cache / "io_photo_catalog.jsonl"
+    io_catalog_lookup: dict[str, dict] = {}
+    for doc in load_jsonl(io_catalog_path):
+        nid = doc.get("nasa_id", "").upper()
+        if nid:
+            io_catalog_lookup[nid] = doc
+    print(f"  IO catalog pre-loaded: {len(io_catalog_lookup)} entries")
     already_found = {r.get("nasa_id") for r in load_jsonl(found_path)}
     already_notfound = {r.get("nasa_id") for r in load_jsonl(notfound_path)}
     already_done = already_found | already_notfound
@@ -61,6 +71,23 @@ def lookup_nhq_in_io(mission: MissionConfig) -> None:
 
     for i, item in enumerate(to_process, 1):
         nasa_id = item["nasa_id"]
+
+        # Check the IO photo catalog before making a network request.
+        catalog_doc = io_catalog_lookup.get(nasa_id.upper())
+        if catalog_doc:
+            record = {
+                "nasa_id": nasa_id,
+                "io_nasa_id": catalog_doc.get("nasa_id", ""),
+                "io_date": catalog_doc.get("md_creation_date", ""),
+                "io_title": catalog_doc.get("md_title", ""),
+                "io_doc_count": 1,
+                "source": "catalog",
+            }
+            append_jsonl(found_path, record)
+            found_count += 1
+            if i <= 3 or i % 100 == 0:
+                print(f"  [{i}/{len(to_process)}] {nasa_id} -> catalog date: {record['io_date']}")
+            continue
 
         result = search_io(nasa_id)
 
@@ -83,6 +110,10 @@ def lookup_nhq_in_io(mission: MissionConfig) -> None:
                 "io_doc_count": len(docs),
             }
             append_jsonl(found_path, record)
+            # Also persist the full IO doc back into the photo catalog so
+            # future runs (and step 3e) can use it without re-querying.
+            append_jsonl(io_catalog_path, best)
+            io_catalog_lookup[best.get("nasa_id", nasa_id).upper()] = best
             found_count += 1
 
             if i <= 3 or i % 100 == 0:

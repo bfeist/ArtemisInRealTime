@@ -1,8 +1,10 @@
 """Step 3b — Discover & fetch Flickr album metadata.
 
-Uses known album IDs from config, or searches by keyword.
+Uses known album IDs from config (supports multiple albums per mission).
 
-Produces: {data_dir}/{mission}/raw/photos/flickr/album_metadata.json
+Produces:
+  {data_dir}/{mission}/raw/photos/flickr/album_metadata.json
+  {data_dir}/{mission}/raw/photos/flickr/album_metadata_sources.json  (audit)
 """
 
 import argparse
@@ -12,33 +14,105 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import MISSIONS, MissionConfig
+from config import MISSIONS, FlickrAlbum, MissionConfig
 from shared.flickr_api import get_photoset_photos
 
 
-def fetch_album(mission: MissionConfig) -> None:
-    if not mission.flickr_album_id:
-        print(f"  No Flickr album ID configured for {mission.name}. Skipping.")
+def _effective_albums(mission: MissionConfig) -> list[FlickrAlbum]:
+    """Return the list of albums to fetch for this mission.
+
+    Prefers the new ``flickr_albums`` list; falls back to the legacy
+    ``flickr_album_id`` field (using the NASA Johnson default user_id).
+    """
+    if mission.flickr_albums:
+        return mission.flickr_albums
+    if mission.flickr_album_id:
+        return [FlickrAlbum(
+            photoset_id=mission.flickr_album_id,
+            user_id="29988733@N04",
+            owner_label="NASA Johnson",
+        )]
+    return []
+
+
+def fetch_albums(mission: MissionConfig) -> None:
+    albums = _effective_albums(mission)
+    if not albums:
+        print(f"  No Flickr albums configured for {mission.name}. Skipping.")
         return
 
     out_path = mission.raw_photos_flickr / "album_metadata.json"
 
-    # Check if already fetched
     if out_path.exists():
         with open(out_path, "r", encoding="utf-8") as f:
             existing = json.load(f)
-        print(f"  Album already fetched: {len(existing)} photos. Delete {out_path} to re-fetch.")
+        print(
+            f"  Already fetched: {len(existing)} photos. "
+            f"Delete {out_path} to re-fetch."
+        )
         return
 
-    print(f"  Fetching Flickr album {mission.flickr_album_id}...")
-    photos = get_photoset_photos(mission.flickr_album_id)
-    print(f"  Fetched {len(photos)} photos")
+    # merged dict: flickr photo id → photo record (first album wins on conflict)
+    merged: dict[str, dict] = {}
+    audit_albums: list[dict] = []
+    total_fetched = 0
+
+    for album in albums:
+        label = f"{album.owner_label} ({album.user_id})" if album.owner_label else album.user_id
+        print(f"  Fetching album {album.photoset_id}  [{label}]...")
+        photos = get_photoset_photos(album.photoset_id, album.user_id)
+        fetched = len(photos)
+        print(f"    → {fetched} photos")
+        total_fetched += fetched
+
+        duplicates_this_album = 0
+        for photo in photos:
+            fid = photo.get("id", "")
+            if not fid:
+                continue
+            if fid in merged:
+                # Photo already seen in an earlier album — append album reference
+                existing_rec = merged[fid]
+                if "source_album_ids" not in existing_rec:
+                    existing_rec["source_album_ids"] = [existing_rec.get("album_id", "")]
+                existing_rec["source_album_ids"].append(album.photoset_id)
+                duplicates_this_album += 1
+            else:
+                photo["album_id"] = album.photoset_id
+                photo["album_user_id"] = album.user_id
+                photo["album_owner_label"] = album.owner_label
+                merged[fid] = photo
+
+        audit_albums.append({
+            "photoset_id": album.photoset_id,
+            "user_id": album.user_id,
+            "owner_label": album.owner_label,
+            "fetched": fetched,
+            "duplicates_with_prior_albums": duplicates_this_album,
+        })
+
+    result = list(merged.values())
+    unique_count = len(result)
+    duplicate_count = total_fetched - unique_count
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(photos, f, indent=2, ensure_ascii=False)
+        json.dump(result, f, indent=2, ensure_ascii=False)
+    print(f"\n  Merged output: {unique_count} unique photos → {out_path}")
+    if duplicate_count:
+        print(f"  Duplicates removed: {duplicate_count}")
 
-    print(f"  Saved to {out_path}")
+    # Write audit file
+    audit = {
+        "albums": audit_albums,
+        "total_fetched": total_fetched,
+        "unique_count": unique_count,
+        "duplicate_count": duplicate_count,
+    }
+    audit_path = mission.raw_photos_flickr / "album_metadata_sources.json"
+    with open(audit_path, "w", encoding="utf-8") as f:
+        json.dump(audit, f, indent=2, ensure_ascii=False)
+    print(f"  Audit written → {audit_path}")
 
 
 def main():
@@ -53,8 +127,8 @@ def main():
     mission = MISSIONS[args.mission]
     mission.ensure_dirs()
 
-    print(f"\n=== Step 3b: Flickr Album — {mission.name} ===\n")
-    fetch_album(mission)
+    print(f"\n=== Step 3b: Flickr Albums — {mission.name} ===\n")
+    fetch_albums(mission)
 
 
 if __name__ == "__main__":

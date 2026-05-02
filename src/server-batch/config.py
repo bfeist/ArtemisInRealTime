@@ -21,6 +21,7 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 # ── Directories ───────────────────────────────────────────────────────────────
 DATA_DIR = Path(os.environ.get("DATA_DIR", REPO_ROOT.parent / "ArtemisInRealTime_assets"))
 YT_VIDEO_DIR = Path(os.environ.get("YT_VIDEO_DIR", "H:/ArtemisInRealTime_yt_videos"))
+PHOTO_ASSETS_DIR = Path(os.environ.get("PHOTO_ASSETS_DIR", "D:/ArtemisInRealTime_assets/photos"))
 
 # ── IO API ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,15 @@ IO_API_BASE = "https://io.jsc.nasa.gov/api/search"
 IO_ORIGIN_HEADER = "coda.fit.nasa.gov"
 
 # ── Mission configuration ────────────────────────────────────────────────────
+
+
+@dataclass
+class FlickrAlbum:
+    """A single Flickr photoset/album to ingest."""
+
+    photoset_id: str
+    user_id: str
+    owner_label: str = ""  # human-readable, e.g. "NASA Johnson" or "NASA HQ PHOTO"
 
 
 @dataclass
@@ -43,7 +53,8 @@ class MissionConfig:
     io_parent_cid: str | None = None
     io_flight_collections: list[str] = field(default_factory=list)
     yt_search_terms: list[str] = field(default_factory=list)
-    flickr_album_id: str | None = None
+    flickr_album_id: str | None = None  # legacy single-album field
+    flickr_albums: list[FlickrAlbum] = field(default_factory=list)  # preferred multi-album list
     flickr_album_keywords: list[str] = field(default_factory=list)
     nasa_id_patterns: list[str] = field(default_factory=list)
 
@@ -76,6 +87,14 @@ class MissionConfig:
     @property
     def raw_photos_nasa(self) -> Path:
         return self.data_dir / "raw" / "photos" / "images_nasa_gov"
+
+    @property
+    def photos_flickr_orig(self) -> Path:
+        return PHOTO_ASSETS_DIR / self.slug / "flickr_orig"
+
+    @property
+    def photos_nasa_orig(self) -> Path:
+        return PHOTO_ASSETS_DIR / self.slug / "nasa_orig"
 
     @property
     def processed_transcripts(self) -> Path:
@@ -147,7 +166,19 @@ MISSIONS: dict[str, MissionConfig] = {
             "Artemis-02 Events",
         ],
         yt_search_terms=["Artemis II", "Artemis 2"],
-        flickr_album_id="72177720307234654",
+        flickr_album_id=None,
+        flickr_albums=[
+            FlickrAlbum(
+                photoset_id="72177720307234654",
+                user_id="29988733@N04",
+                owner_label="NASA Johnson",
+            ),
+            FlickrAlbum(
+                photoset_id="72177720331487648",
+                user_id="35067687@N04",
+                owner_label="NASA HQ PHOTO",
+            ),
+        ],
         flickr_album_keywords=["Artemis II", "Artemis 2"],
         nasa_id_patterns=[r"jsc\d{4}m\d+", r"art\d+[me]\d+"],
     ),

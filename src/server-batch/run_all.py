@@ -1,9 +1,15 @@
 """ArtemisInRealTime — Pipeline runner.
 
-Usage:
-    python run_all.py --mission artemis-ii              # Run all steps
-    python run_all.py --mission artemis-ii --step 2a    # Run single step
-    python run_all.py --mission artemis-i --step 2a 2b  # Run multiple steps
+Usage (recommended — via uv):
+    uv run run_all.py --mission artemis-ii              # Run all steps
+    uv run run_all.py --mission artemis-ii --step 2a    # Run single step
+    uv run run_all.py --mission artemis-i --step 2a 2b  # Run multiple steps
+
+    # Run an individual module directly
+    uv run python -m 2_video.2a_ia_video_discover --mission artemis-ii
+
+Usage (after manual uv sync):
+    python run_all.py --mission artemis-ii
 """
 
 import argparse
@@ -34,7 +40,9 @@ STEPS = [
     ("3b", "3_photos.3b_flickr_albums", "Fetch Flickr album metadata", None),
     ("3e", "3_photos.3e_images_nasa_gov", "Search images.nasa.gov", None),
     ("3e2", "3_photos.3e2_io_nhq_lookup", "Reverse-lookup NHQ photos in IO", None),
-    ("3f", "3_photos.3f_web_photos", "Produce web-ready photos JSON", None),
+    ("3f", "3_photos.3f_download_photos", "Download full-res photo originals", None),
+    ("3f2", "3_photos.3f2_extract_photo_exif", "Extract EXIF datetimes from downloaded photos", None),
+    ("3g", "3_photos.3g_web_photos", "Produce web-ready photos JSON", None),
 ]
 
 

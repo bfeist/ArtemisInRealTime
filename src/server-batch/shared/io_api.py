@@ -36,7 +36,7 @@ def search_io(keyword: str, api_key: str | None = None) -> dict | None:
 
         pages = math.ceil(total / _RPP)
         for page in range(1, pages):
-            page_url = f"{url}&start={page * _RPP}"
+            page_url = f"{IO_API_BASE}/q={keyword}&rpp={_RPP}&sr={page * _RPP + 1}?key={key}&format=json"
             try:
                 pr = requests.get(page_url, verify=False, headers=_HEADERS, timeout=30)
                 pr.raise_for_status()
@@ -84,7 +84,7 @@ def search_io_collection(
         if total > _RPP:
             pages = math.ceil(total / _RPP)
             for page in range(1, pages):
-                page_url = f"{url}&start={page * _RPP}"
+                page_url = f"{IO_API_BASE}/{path_params}&sr={page * _RPP + 1}?key={key}&format=json"
                 try:
                     pr = requests.get(page_url, verify=False, headers=_HEADERS, timeout=60)
                     pr.raise_for_status()

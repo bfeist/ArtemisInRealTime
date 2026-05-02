@@ -35,27 +35,30 @@ src/
 ├── 2_video/                   # YouTube livestreams + IA video
 │   ├── 2a_ia_video_discover.py      # Discover IA items by subject tag + uploader search
 │   ├── 2b_ia_video_download.py      # Download MP4s from discovered IA items
-│   ├── 2c_io_search.py              # Search IO API for nasa_ids & broadcast timestamps
-│   ├── 2c2_io_video_catalog.py      # Scrape IO flight video collections
 │   ├── 2d_yt_metadata.py            # YouTube Data API: fetch livestream metadata
 │   ├── 2e_yt_download.py            # yt-dlp: download YouTube videos
-│   ├── 2f_transcribe.py             # WhisperX transcription of video audio
-│   └── 2g_web_video.py              # Produce web-ready JSON
+│   ├── 2f_ia_video_metadata.py      # Build IA video metadata JSON (timestamps + duration)
+│   ├── 2g_web_video.py              # Produce web-ready JSON
+│   ├── [planned] 2c_io_search.py         # Search IO API for nasa_ids & broadcast timestamps
+│   ├── [planned] 2c2_io_video_catalog.py # Scrape IO flight video collections
+│   └── [planned] 2_transcribe.py         # WhisperX transcription of YouTube video audio
 │
 ├── 3_photos/                  # IA still imagery + Flickr + images.nasa.gov
 │   ├── 3a_ia_stills_download.py     # Download still imagery from IA collections
 │   ├── 3a2_io_photo_catalog.py      # Scrape IO flight photo collections
+│   ├── 3a3_io_exif_scrape.py        # Scrape EXIF for ground camera timezone corrections
 │   ├── 3b_flickr_albums.py          # Discover & fetch Flickr album metadata
-│   ├── 3c_flickr_photos.py          # Fetch photo metadata + URLs
-│   ├── 3d_flickr_classify.py        # AI classification: flight vs preflight/portrait/etc.
 │   ├── 3e_images_nasa_gov.py        # Scrape images.nasa.gov for Artemis photos
-│   └── 3f_web_photos.py             # Produce web-ready JSON
+│   ├── 3e2_io_nhq_lookup.py         # Reverse-lookup NHQ photos in IO for precise timestamps
+│   ├── 3f_web_photos.py             # Produce web-ready JSON
+│   ├── [planned] 3c_flickr_photos.py     # Fetch per-photo metadata + URLs
+│   └── [planned] 3d_flickr_classify.py   # AI classification: flight vs preflight/portrait/etc.
 │
 └── shared/                    # Shared utilities
     ├── io_api.py                     # Imagery Online API client
     ├── ia_helpers.py                 # Archive.org discovery + download helpers
     ├── flickr_api.py                 # Flickr API client
-    └── yt_helpers.py                 # YouTube API + yt-dlp wrappers
+    └── [planned] yt_helpers.py       # YouTube API + yt-dlp wrappers
 ```
 
 ### Data directory layout
@@ -72,14 +75,19 @@ Assets live outside the repo in a sibling directory (`../ArtemisInRealTime_asset
 │   │   └── photos/
 │   │       ├── ia_stills/         # Artemis-I-Still-Imagery (62 JPEGs)
 │   │       ├── flickr/            # Flickr metadata JSON
+│   │       │   └── album_metadata.json
 │   │       └── images_nasa_gov/   # images.nasa.gov metadata
+│   │           └── catalog.json
 │   ├── processed/
-│   │   ├── transcripts/           # WhisperX output (video only, no comm)
+│   │   ├── ia_video_catalog.json           # IA item list (step 2a)
+│   │   ├── ia_video_metadata.json          # IA video timestamps + duration (step 2f)
 │   │   └── io_cache/              # IO API response cache
-│   │       ├── io_found.jsonl     # IA videos matched in IO
-│   │       ├── io_notfound.jsonl  # IA videos not in IO
-│   │       ├── io_video_catalog.jsonl  # Full IO video catalog
-│   │       └── io_photo_catalog.jsonl  # Full IO photo catalog
+│   │       ├── io_photo_catalog.jsonl             # Full IO photo catalog (step 3a2)
+│   │       ├── io-photo-exif-metadata.json           # Ground camera EXIF data (step 3a3)
+│   │       ├── io-photo-time-overrides.json          # Ground camera TZ offsets (step 3a3)
+│   │       ├── io-photo-datetime-overrides.json      # Onboard camera datetimes (step 3a3)
+│   │       ├── io_nhq_photos_found.jsonl          # NHQ photos found in IO (step 3e2)
+│   │       └── io_nhq_photos_notfound.jsonl       # NHQ photos not in IO (step 3e2)
 │   └── web/                       # Web-ready JSON
 │       ├── videoIA.json
 │       ├── videoYt.json
@@ -94,14 +102,19 @@ Assets live outside the repo in a sibling directory (`../ArtemisInRealTime_asset
 │   │   └── photos/
 │   │       ├── ia_stills/         # IA still imagery (when available)
 │   │       ├── flickr/            # Flickr metadata JSON
+│   │       │   └── album_metadata.json
 │   │       └── images_nasa_gov/   # images.nasa.gov metadata
+│   │           └── catalog.json
 │   ├── processed/
-│   │   ├── transcripts/           # WhisperX output (comm + video)
+│   │   ├── ia_video_catalog.json           # IA item list (step 2a)
+│   │   ├── ia_video_metadata.json          # IA video timestamps + duration (step 2f)
 │   │   └── io_cache/              # IO API response cache
-│   │       ├── io_found.jsonl     # IA videos matched in IO
-│   │       ├── io_notfound.jsonl  # IA videos not in IO
-│   │       ├── io_video_catalog.jsonl  # Full IO video catalog
-│   │       └── io_photo_catalog.jsonl  # Full IO photo catalog
+│   │       ├── io_photo_catalog.jsonl             # Full IO photo catalog (step 3a2)
+│   │       ├── photo-exif-metadata.json           # Ground camera EXIF data (step 3a3)
+│   │       ├── photo-time-overrides.json          # Ground camera TZ offsets (step 3a3)
+│   │       ├── photo-datetime-overrides.json      # Onboard camera datetimes (step 3a3)
+│   │       ├── io_nhq_photos_found.jsonl          # NHQ photos found in IO (step 3e2)
+│   │       └── io_nhq_photos_notfound.jsonl       # NHQ photos not in IO (step 3e2)
 │   └── web/                       # Web-ready JSON
 │       ├── comm.json
 │       ├── videoIA.json
@@ -109,7 +122,7 @@ Assets live outside the repo in a sibling directory (`../ArtemisInRealTime_asset
 │       └── photos.json
 │
 └── shared/
-    └── flickr_classify_cache/     # AI classification results (reusable)
+    └── flickr_classify_cache/     # AI classification results (reusable) — planned
 ```
 
 ---
@@ -342,7 +355,7 @@ Update `config.py` as new items are discovered — add them to `IA_KNOWN_IDENTIF
 
 Output: `$DATA_DIR/{mission}/raw/video/ia/`
 
-### Step 2c: IO API Search & Flight-Day Filtering
+### Step 2c: IO API Search & Flight-Day Filtering _(not yet built)_
 
 **Reference**: `IO_nasatv/scripts/IA_videos/3_search_io_api.py`
 
@@ -362,7 +375,7 @@ Output: `$DATA_DIR/{mission}/raw/video/ia/`
 - **Flight-day filtering**: Use IO metadata (`vmd_start_gmt`) to determine which videos were broadcast during the mission date range. Mark preflight content (training reels, news conferences, crew profiles) so it can be excluded from the timeline. Only videos with timestamps within `mission_start` to `mission_end` are included in web output.
 - Output: `$DATA_DIR/{mission}/processed/io_cache/io_found.jsonl`, `io_notfound.jsonl`
 
-### Step 2c2: IO Video Collection Scrape
+### Step 2c2: IO Video Collection Scrape _(not yet built)_
 
 Scrape IO’s flight video collections directly (not just IA filename lookups). For Artemis II this is the **VIDEO** collection (2,418 videos) plus FCR videos.
 
@@ -395,13 +408,25 @@ Scrape IO’s flight video collections directly (not just IA filename lookups). 
 - **Download to D: drive** (backup copies, like ISSiRT): `D:/ArtemisInRealTime_yt_videos/{mission}/`
 - Output metadata stays in: `$DATA_DIR/{mission}/raw/video/yt/`
 
-### Step 2f: Video Transcription
+### Step 2f: IA Video Metadata
 
-- WhisperX on extracted audio from **YouTube livestream rips only** (not all IA videos — IA resource reels/AVAILs are B-roll without meaningful speech)
-- Same WhisperX config as comm transcription (large-v3, CUDA)
-- Output: `$DATA_DIR/{mission}/processed/transcripts/video/`
+Builds `ia_video_metadata.json` — the IA equivalent of `yt_metadata.json`. Parses timestamps
+from IA item identifiers using NASA naming conventions, fetches item metadata from the IA API,
+and records the matching downloaded file path for each item.
 
-### Step 2f2: Comm-to-YouTube Sync (Artemis II only)
+- Parse timestamp from identifier using known NASA naming patterns:
+  - `ART-DL-N_YYYY_DOY_HHMM_SS...` — precise UTC timestamp encoded in filename
+  - `art001m<catalog>_Title_YYMMDD`, `jsc<YYYY>m<N>_Title_YYMMDD`, etc. — day-precision
+  - Fallback: use `date` field from IA item metadata
+- Fetch full IA item metadata (title, description, duration) via IA API
+- Find matching downloaded file in `raw/video/ia/`
+- Output: `$DATA_DIR/{mission}/processed/ia_video_metadata.json`
+- Resumable — skips identifiers already in output file
+
+**Planned but not yet built — video transcription**: WhisperX transcription of YouTube
+livestream audio (not IA resource reels — those are B-roll without meaningful speech).
+
+### Step 2f2: Comm-to-YouTube Sync _(not yet built)_ (Artemis II only)
 
 **Reference**: ISSiRT comm-to-YouTube matching logic
 
@@ -413,12 +438,11 @@ Scrape IO’s flight video collections directly (not just IA filename lookups). 
 ### Step 2g: Web-ready JSON
 
 - Merge YouTube + IA video metadata
-- Enrich with IO timestamps where available
-- **Only include flight-day videos** (filtered by IO metadata date range in Step 2c)
 - Video fields: `{ id, title, source, startTime, duration, thumbnailUrl, sourceUrl }`
   - `sourceUrl` links back to original IA item or YouTube video for download
   - No `nasaId` in output (internal use only)
 - Output: `$DATA_DIR/{mission}/web/videoYt.json`, `$DATA_DIR/{mission}/web/videoIA.json`
+- Note: IO timestamp enrichment and flight-day filtering (step 2c) are planned but not yet built
 
 ---
 

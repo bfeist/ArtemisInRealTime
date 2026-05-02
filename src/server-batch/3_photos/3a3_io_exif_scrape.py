@@ -5,16 +5,15 @@ offset is only available in EXIF fields (DigitalCreationTime / TimeCreated)
 visible on individual photo info pages (info.cfm?pid=XXXXX).
 
 This script:
-  1. Fetches all mission-day ground photos from IO (date-range + collection)
-  2. Scrapes each photo's info page to extract EXIF metadata
-  3. Writes photo-exif-metadata.json (full EXIF) and photo-time-overrides.json
-     (per-photo timezone correction map)
+  1. Reads all photos from io_photo_catalog.jsonl (step 3a2 output)
+  2. Scrapes each photo's info page to extract EXIF metadata, saving progressively
+  3. Writes photo-time-overrides.json (per-photo timezone correction map)
 
-Only jsc* and nhq* prefixed photos are scraped — onboard cameras (art002e/a)
-are already in UTC.
+Scrape results are cached incrementally in io_cache/io_photo_exif.jsonl so
+the script can be interrupted and resumed. Use --replace to force a full re-scrape.
 
-Reads:    IO API (date range + collection CID)
-Produces: {data_dir}/{mission}/processed/io_cache/photo-exif-metadata.json
+Reads:    {data_dir}/{mission}/processed/io_cache/io_photo_catalog.jsonl (step 3a2)
+Produces: {data_dir}/{mission}/processed/io_cache/io_photo_exif.jsonl (cache)
           {data_dir}/{mission}/processed/io_cache/photo-time-overrides.json
 """
 
@@ -23,7 +22,6 @@ import asyncio
 import json
 import re
 import sys
-import time
 from pathlib import Path
 
 import requests
@@ -31,7 +29,8 @@ import urllib3
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import MISSIONS, IO_API_BASE, IO_KEY, IO_ORIGIN_HEADER, MissionConfig
+from config import MISSIONS, MissionConfig
+from shared.io_api import load_jsonl
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -50,6 +49,9 @@ _ORIG_FILENAME_TS_RE = re.compile(r"_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})[
 # Concurrency for scraping info pages
 CONCURRENCY = 10
 
+# Filename for progressive EXIF scrape cache (written to io_cache/)
+IO_EXIF_JSONL = "io_photo_exif.jsonl"
+
 # ── Camera serial → timezone mapping ────────────────────────────────────────
 # Only cameras with a CONSISTENT non-default timezone across the entire
 # mission. Cameras that changed timezone mid-mission are excluded — handled
@@ -65,10 +67,6 @@ PREFIX_DEFAULTS = {
     "jsc2026e": "-05:00",  # JSC Houston photographers, CDT
     "nhq": "-04:00",       # NHQ photographers at KSC, EDT
 }
-
-# IO collection CID containing Artemis mission photos
-# (parent "Artemis - Missions" collection at io.jsc.nasa.gov)
-ARTEMIS_MISSIONS_CID = "2346894"
 
 
 def get_prefix_default(nasa_id: str) -> str | None:
@@ -96,54 +94,6 @@ def get_serial(exif: dict | None) -> str | None:
     if m:
         return m[1]
     return None
-
-
-# ── IO API: fetch mission-day ground photos ─────────────────────────────────
-
-
-def fetch_mission_day_photos(mission: MissionConfig) -> list[dict]:
-    """Fetch all mission-day photos from IO using date range + collection."""
-    # IO date format: MM-DD-YYYY
-    start = mission.mission_start  # "2026-04-01"
-    end = mission.mission_end      # "2026-04-11"
-    # Convert YYYY-MM-DD to MM-DD-YYYY
-    sy, sm, sd = start.split("-")
-    ey, em, ed = end.split("-")
-    # Extend end date by 2 days to catch late-arriving photos
-    from datetime import datetime, timedelta
-    end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=2)
-    end_ext = end_dt.strftime("%m-%d-%Y")
-    start_fmt = f"{sm}-{sd}-{sy}"
-
-    rpp = 500
-    headers = {"Origin": IO_ORIGIN_HEADER}
-    base_params = (
-        f"rpp={rpp}&s_dt={start_fmt}&e_dt={end_ext}"
-        f"&cols={ARTEMIS_MISSIONS_CID}&as=1&so=7"
-    )
-    url = f"{IO_API_BASE}/{base_params}?key={IO_KEY}&format=json"
-
-    resp = requests.get(url, verify=False, headers=headers, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-
-    total = data["results"]["response"]["numfound"]
-    docs = list(data["results"]["response"]["docs"])
-    print(f"  IO date-range query: {total} total photos")
-
-    # Paginate
-    import math
-    pages = math.ceil(total / rpp)
-    for page in range(1, pages):
-        sr = page * rpp + 1
-        page_url = f"{url}&sr={sr}"
-        pr = requests.get(page_url, verify=False, headers=headers, timeout=60)
-        pr.raise_for_status()
-        docs.extend(pr.json()["results"]["response"]["docs"])
-        print(f"    Page {page + 1}/{pages} ({len(docs)} fetched)")
-        time.sleep(0.3)
-
-    return docs
 
 
 # ── Scrape EXIF from info pages ─────────────────────────────────────────────
@@ -284,61 +234,67 @@ def generate_overrides(metadata: list[dict]) -> dict[str, str]:
 # ── Main ────────────────────────────────────────────────────────────────────
 
 
-def scrape_io_exif(mission: MissionConfig) -> None:
-    # 1. Fetch all mission-day photos from IO
-    print("  Fetching mission-day photos from IO...")
-    all_docs = fetch_mission_day_photos(mission)
+def scrape_io_exif(mission: MissionConfig, replace: bool = False) -> None:
+    # 1. Load photos from catalog produced by step 3a2
+    catalog_path = mission.io_cache / "io_photo_catalog.jsonl"
+    if not catalog_path.exists():
+        print("  No io_photo_catalog.jsonl — run step 3a2 first.")
+        return
 
-    # 2. Filter to ground-photographer prefixes
-    docs_to_scrape = [
-        d for d in all_docs
-        if any(d.get("nasa_id", "").startswith(pfx) for pfx in SCRAPE_PREFIXES)
-    ]
-    print(f"  Filtered to {len(docs_to_scrape)} ground photos "
-          f"({', '.join(SCRAPE_PREFIXES)}), "
-          f"skipping {len(all_docs) - len(docs_to_scrape)} onboard/other")
+    all_docs = list(load_jsonl(catalog_path))
+    print(f"  Loaded {len(all_docs)} photos from catalog")
+
+    docs_to_scrape = all_docs
 
     if not docs_to_scrape:
         print("  Nothing to scrape.")
         return
 
-    # 3. Check for existing metadata (resume support)
-    metadata_path = mission.io_cache / "photo-exif-metadata.json"
-    existing = {}
-    if metadata_path.exists():
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            for entry in json.load(f):
-                existing[entry["nasa_id"]] = entry
-        print(f"  Existing metadata: {len(existing)} entries")
+    # 3. Load existing cache (resume support)
+    scraped_path = mission.io_cache / IO_EXIF_JSONL
 
-    to_scrape = [
-        d for d in docs_to_scrape
-        if d["nasa_id"] not in existing
-    ]
+    if replace and scraped_path.exists():
+        scraped_path.unlink()
+        print(f"  --replace: deleted existing {IO_EXIF_JSONL}")
+
+    existing: dict[str, dict] = {}
+    if scraped_path.exists():
+        with open(scraped_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    entry = json.loads(line)
+                    existing[entry["nasa_id"]] = entry
+        print(f"  Existing scraped: {len(existing)} entries (resuming)")
+
+    to_scrape = [d for d in docs_to_scrape if d["nasa_id"] not in existing]
     print(f"  Need to scrape: {len(to_scrape)} new photos")
 
-    # 4. Scrape EXIF from info pages in batches
+    # 4. Scrape EXIF from info pages, appending each batch to the JSONL cache
     if to_scrape:
         print(f"\n  Scraping EXIF from {len(to_scrape)} info pages "
               f"({CONCURRENCY} concurrent)...")
         scraped = 0
-        for i in range(0, len(to_scrape), CONCURRENCY):
-            batch = [
-                (str(d["id"]), d["nasa_id"])
-                for d in to_scrape[i:i + CONCURRENCY]
-            ]
-            results = scrape_batch(batch)
-            for r in results:
-                existing[r["nasa_id"]] = r
-            scraped += len(results)
-            pct = round(scraped / len(to_scrape) * 100)
-            print(f"\r    Progress: {scraped}/{len(to_scrape)} ({pct}%)",
-                  end="", flush=True)
+        with open(scraped_path, "a", encoding="utf-8") as f:
+            for i in range(0, len(to_scrape), CONCURRENCY):
+                batch = [
+                    (str(d["id"]), d["nasa_id"])
+                    for d in to_scrape[i:i + CONCURRENCY]
+                ]
+                results = scrape_batch(batch)
+                for r in results:
+                    existing[r["nasa_id"]] = r
+                    f.write(json.dumps(r, ensure_ascii=False) + "\n")
+                f.flush()
+                scraped += len(results)
+                pct = round(scraped / len(to_scrape) * 100)
+                print(f"\r    Progress: {scraped}/{len(to_scrape)} ({pct}%)",
+                      end="", flush=True)
         print()
 
-    # 5. Build full metadata list (merge IO doc fields + scraped EXIF)
-    metadata = []
+    # 5. Build metadata list (merge catalog doc fields + scraped EXIF) for override generation
     doc_by_nid = {d["nasa_id"]: d for d in docs_to_scrape}
+    metadata = []
     for nid in sorted(existing):
         entry = existing[nid]
         doc = doc_by_nid.get(nid, {})
@@ -350,15 +306,9 @@ def scrape_io_exif(mission: MissionConfig) -> None:
             "md_creation_date": doc.get("md_creation_date", ""),
             "tz_offset": entry.get("tz_offset"),
             "exif": entry.get("exif"),
-            "collections_string": doc.get("collections_string", ""),
         })
 
-    # 6. Write metadata
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2, ensure_ascii=False)
-    print(f"\n  Wrote {len(metadata)} entries to {metadata_path}")
-
-    # 7. Generate and write timezone overrides
+    # 6. Generate and write timezone overrides
     overrides = generate_overrides(metadata)
     overrides_path = mission.io_cache / "photo-time-overrides.json"
     with open(overrides_path, "w", encoding="utf-8") as f:
@@ -379,7 +329,6 @@ def scrape_io_onboard_datetimes(mission: MissionConfig) -> None:
         print("  No io_photo_catalog.jsonl — run step 3a2 first.")
         return
 
-    from shared.io_api import load_jsonl
     all_docs = list(load_jsonl(catalog_path))
     # Skip ground-photographer prefixes — their dates come from md_creation_date + TZ correction
     onboard_docs = [
@@ -446,6 +395,10 @@ def main():
         "--onboard-only", action="store_true",
         help="Only scrape onboard camera datetimes (skip ground TZ correction)",
     )
+    parser.add_argument(
+        "--replace", action="store_true",
+        help="Delete existing io_photo_exif.jsonl and re-scrape from scratch",
+    )
     args = parser.parse_args()
 
     mission = MISSIONS[args.mission]
@@ -453,7 +406,7 @@ def main():
 
     print(f"\n=== Step 3a3: IO EXIF Scrape — {mission.name} ===\n")
     if not args.onboard_only:
-        scrape_io_exif(mission)
+        scrape_io_exif(mission, replace=args.replace)
     print()
     scrape_io_onboard_datetimes(mission)
 

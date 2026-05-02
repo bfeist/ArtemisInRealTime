@@ -1,6 +1,9 @@
 """Step 3e — Search images.nasa.gov for Artemis photos.
 
 Uses the NASA Image and Video Library API (no key required).
+Enriches each result with a date_taken from the IO photo catalog
+(io_photo_catalog.jsonl) when available, and re-filters against the
+mission date window using that more precise date.
 
 Produces: {data_dir}/{mission}/raw/photos/images_nasa_gov/catalog.json
 """
@@ -18,8 +21,25 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import MISSIONS, MissionConfig
+from shared.io_api import load_jsonl
 
 NASA_IMAGES_API = "https://images-api.nasa.gov/search"
+
+
+def _load_io_date_lookup(mission: MissionConfig) -> dict[str, str]:
+    """Return nasa_id (upper) -> md_creation_date from io_photo_catalog.jsonl.
+
+    md_creation_date is the photo's date taken. Cameras not set to GMT will
+    have incorrect timestamps; timezone correction is handled separately.
+    """
+    lookup: dict[str, str] = {}
+    catalog_path = mission.io_cache / "io_photo_catalog.jsonl"
+    for doc in load_jsonl(catalog_path):
+        nid = doc.get("nasa_id", "").upper()
+        date = doc.get("md_creation_date", "")
+        if nid and date:
+            lookup[nid] = date
+    return lookup
 
 
 def _in_mission_window(date_str: str, start: datetime, end: datetime) -> bool:
@@ -138,7 +158,32 @@ def search_nasa_images(mission: MissionConfig) -> list[dict]:
 
         print(f"    Found {len(seen_ids)} unique images so far")
 
-    return all_items
+    # Enrich with IO dates and re-filter against mission window.
+    # Uses photo-datetime-overrides.json (UTC from original filenames) first,
+    # then md_creation_date as fallback. Both more precise than date_created.
+    io_lookup = _load_io_date_lookup(mission)
+    if io_lookup:
+        print(f"  Enriching with IO date lookup ({len(io_lookup)} entries)")
+
+    enriched: list[dict] = []
+    dropped = 0
+    for item in all_items:
+        nasa_id = item["nasa_id"]
+        io_date = io_lookup.get(nasa_id.upper(), "")
+        item["date_taken"] = io_date or item.get("date_created", "")
+
+        # Re-check date window using the more precise IO date when available.
+        effective_date = io_date or item.get("date_created", "")
+        if effective_date and not _in_mission_window(effective_date, win_start, win_end):
+            dropped += 1
+            continue
+
+        enriched.append(item)
+
+    if dropped:
+        print(f"  Dropped {dropped} items outside mission window after IO date enrichment")
+
+    return enriched
 
 
 def main():
