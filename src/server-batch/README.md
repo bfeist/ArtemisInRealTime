@@ -60,7 +60,9 @@ uv run python -m 3_photos.3a3_io_exif_scrape     --mission artemis-ii
 uv run python -m 3_photos.3b_flickr_albums       --mission artemis-ii
 uv run python -m 3_photos.3e_images_nasa_gov     --mission artemis-ii
 uv run python -m 3_photos.3e2_io_nhq_lookup      --mission artemis-ii
-uv run python -m 3_photos.3f_web_photos          --mission artemis-ii
+uv run python -m 3_photos.3g_eol_json            --mission artemis-ii
+uv run python -m 3_photos.3h_download_eol_photos --mission artemis-ii
+uv run python -m 3_photos.3k_web_photos          --mission artemis-ii
 ```
 
 ## Listing available steps
@@ -71,23 +73,25 @@ uv run run_all.py --mission artemis-ii --list
 
 ## Step reference
 
-| Step | Description | Missions |
-|------|-------------|----------|
-| 1a   | Download comm audio ZIPs | artemis-ii |
-| 1b   | Transcribe comm audio (WhisperX) | artemis-ii |
-| 1c   | Produce web-ready comm JSON | artemis-ii |
-| 2a   | Discover IA video items | all |
-| 2b   | Download IA video MP4s | all |
-| 2d   | Fetch YouTube metadata | all |
-| 2e   | Download YouTube videos | all |
-| 2g   | Produce web-ready video JSON | all |
-| 3a   | Download IA stills | all |
-| 3a2  | Scrape IO photo collections | all |
-| 3a3  | Scrape IO EXIF for timezone corrections | all |
-| 3b   | Fetch Flickr album metadata | all |
-| 3e   | Search images.nasa.gov | all |
-| 3e2  | Reverse-lookup NHQ photos in IO | all |
-| 3f   | Produce web-ready photos JSON | all |
+| Step   | Description                             | Missions   |
+| ------ | --------------------------------------- | ---------- |
+| 1a     | Download comm audio ZIPs                | artemis-ii |
+| 1b     | Transcribe comm audio (WhisperX)        | artemis-ii |
+| 1c     | Produce web-ready comm JSON             | artemis-ii |
+| 2a     | Discover IA video items                 | all        |
+| 2b     | Download IA video MP4s                  | all        |
+| 2d     | Fetch YouTube metadata                  | all        |
+| 2e     | Download YouTube videos                 | all        |
+| 2g     | Produce web-ready video JSON            | all        |
+| 3a     | Download IA stills                      | all        |
+| 3a2    | Scrape IO photo collections             | all        |
+| 3a3    | Scrape IO EXIF for timezone corrections | all        |
+| 3b     | Fetch Flickr album metadata             | all        |
+| 3e     | Search images.nasa.gov                  | all        |
+| 3e2    | Reverse-lookup NHQ photos in IO         | all        |
+| 3f     | Produce web-ready photos JSON           | all        |
+| 3g_eol | Fetch EOL crew photo metadata           | artemis-ii |
+| 3h     | Download EOL large images to disk       | artemis-ii |
 
 ## Dependency management
 

@@ -42,7 +42,9 @@ STEPS = [
     ("3e2", "3_photos.3e2_io_nhq_lookup", "Reverse-lookup NHQ photos in IO", None),
     ("3f", "3_photos.3f_download_photos", "Download full-res photo originals", None),
     ("3f2", "3_photos.3f2_extract_photo_exif", "Extract EXIF datetimes from downloaded photos", None),
-    ("3g", "3_photos.3g_web_photos", "Produce web-ready photos JSON", None),
+    ("3g_eol", "3_photos.3g_eol_json", "Fetch EOL crew photo metadata", {"artemis-ii"}),
+    ("3h", "3_photos.3h_download_eol_photos", "Download EOL large images to disk", {"artemis-ii"}),    
+    ("3k", "3_photos.3k_web_photos", "Produce web-ready photos JSON", None),
 ]
 
 
