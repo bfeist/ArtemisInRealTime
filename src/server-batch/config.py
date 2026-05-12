@@ -22,6 +22,7 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 DATA_DIR = Path(os.environ.get("DATA_DIR", REPO_ROOT.parent / "ArtemisInRealTime_assets"))
 YT_VIDEO_DIR = Path(os.environ.get("YT_VIDEO_DIR", "H:/ArtemisInRealTime_yt_videos"))
 PHOTO_ASSETS_DIR = Path(os.environ.get("PHOTO_ASSETS_DIR", "D:/ArtemisInRealTime_assets/photos"))
+VIDEO_ASSETS_DIR = Path(os.environ.get("VIDEO_ASSETS_DIR", "D:/ArtemisInRealTime_assets/videos"))
 
 # ── IO API ────────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ class MissionConfig:
     ia_comm_collection: str | None = None
     ia_stills_collection: str | None = None
     io_parent_cid: str | None = None
+    io_nasatv_cid: str | None = None  # IO collection CID for NASA TV video assets
     io_flight_collections: list[str] = field(default_factory=list)
     yt_search_terms: list[str] = field(default_factory=list)
     flickr_album_id: str | None = None  # legacy single-album field
@@ -89,6 +91,10 @@ class MissionConfig:
         return self.data_dir / "raw" / "photos" / "images_nasa_gov"
 
     @property
+    def videos_io_dir(self) -> Path:
+        return VIDEO_ASSETS_DIR / self.slug
+
+    @property
     def photos_flickr_orig(self) -> Path:
         return PHOTO_ASSETS_DIR / self.slug / "flickr_orig"
 
@@ -125,6 +131,7 @@ class MissionConfig:
             self.io_cache,
             self.web_dir,
             self.yt_video_dir,
+            self.videos_io_dir,
         ]:
             d.mkdir(parents=True, exist_ok=True)
 
@@ -140,6 +147,7 @@ MISSIONS: dict[str, MissionConfig] = {
         ia_comm_collection=None,
         ia_stills_collection="Artemis-I-Still-Imagery",
         io_parent_cid="2355140",
+        io_nasatv_cid="2368197",
         io_flight_collections=[],
         yt_search_terms=["Artemis I", "Artemis 1"],
         flickr_album_id="72177720303788800",
@@ -156,6 +164,7 @@ MISSIONS: dict[str, MissionConfig] = {
         ia_comm_collection="Artemis-II-ACR-Collection",
         ia_stills_collection=None,
         io_parent_cid="2380537",
+        io_nasatv_cid="2408988",
         io_flight_collections=[
             "MISSION IMAGERY",
             "VIDEO",

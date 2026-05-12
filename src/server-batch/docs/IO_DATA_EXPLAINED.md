@@ -34,24 +34,24 @@ The "not found" items are typically IA uploads that used non-standard identifier
 
 ---
 
-### 2. IO Video Catalog (`io_video_catalog.jsonl`) — Step 2c2 _(planned — not yet built)_
+### 2. IO NASA TV Video Download (`io_nasatv_catalog.jsonl`, `io_videos.json`) — Step 2c
 
-**Purpose**: Get the **complete catalog** of all flight video in IO's collection — not just the ones that match IA uploads.
+**Purpose**: Download all NASA TV video files from the mission's dedicated NASA TV IO collection and produce a web-ready metadata file.
 
-**How it works**: Each mission has a parent collection in IO (a CID). We scrape all video assets (`asset_type=2`) under that parent collection. This fetches everything — NASA TV broadcasts, crew recordings, event coverage — whether or not it was ever uploaded to Internet Archive.
+**How it works**: Each mission has a specific NASA TV collection CID (`io_nasatv_cid` in config). We fetch all video docs (`asset_type=2`) from that collection, download each file using the IO webpath URL pattern (`{IO_HOST}{webpath}/video/{nasa_id}.{ext}`), and write a sorted JSON summary for the web layer.
 
-**What it produces**: One JSONL file with every video document in the IO collection.
+**What it produces**:
 
-| Mission    | IO Parent CID | Videos in IO | Videos on IA |
-| ---------- | ------------- | ------------ | ------------ |
-| Artemis I  | 2355140       | 2,108        | 87           |
-| Artemis II | 2380537       | 2,233        | 18           |
+- `processed/io_cache/io_nasatv_catalog.jsonl` — raw IO docs for every video in the collection
+- `web/io_videos.json` — web-ready metadata: id, title, description, start/end times, duration, collection path, videoUrl, dataUrl
+- `{VIDEO_ASSETS_DIR}/{mission}/` — downloaded video files named by nasa_id
 
-**Why it matters**: Internet Archive only has a fraction of the video that IO catalogs. The IO video catalog is the comprehensive inventory — it tells us every video that exists for the mission, with accurate timestamps, durations, and descriptions. This is used for:
+| Mission    | NASA TV CID | Videos |
+| ---------- | ----------- | ------ |
+| Artemis I  | —           | —      |
+| Artemis II | 2408988     | TBD    |
 
-- Building the complete video timeline (not just IA uploads)
-- Cross-referencing with YouTube livestreams
-- Identifying what video content exists but hasn't been made publicly available yet
+**Why it matters**: The NASA TV collection contains the broadcast-quality continuous coverage recordings. IO's `vmd_start_gmt` provides the exact UTC broadcast time for timeline placement.
 
 ---
 
@@ -78,9 +78,9 @@ The "not found" items are typically IA uploads that used non-standard identifier
 Internet Archive           IO (Imagery Online)              Public Sources
   87 IA videos  ──────┐
                        │    ┌─────────────────────────┐
-  Step 2c: search IO   ├───>│  IO Video Catalog       │     YouTube (274 videos)
-  for each IA item's   │    │  2,108 videos (A1)      │
-  NASA ID              │    │  2,233 videos (A2)      │
+  Step 2c: search IO   ├───>│  IO NASA TV Videos      │
+  for each IA item's   │    │  io_nasatv_catalog.jsonl│
+  NASA ID              │    │  web/io_videos.json     │
                        │    └─────────────────────────┘
   io_found.jsonl ◄─────┘
   (14 matches)               ┌─────────────────────────┐
@@ -90,13 +90,11 @@ Internet Archive           IO (Imagery Online)              Public Sources
                              └─────────────────────────┘
 ```
 
-- **io_found** = "which of our IA videos did we find in IO?" (timestamp enrichment for IA items)
-- **io_video_catalog** = "what is every video IO knows about for this mission?" (comprehensive inventory)
+- **io_found** = "which of our IA videos did we find in IO?" (timestamp enrichment for IA items) _(planned)_
+- **io_nasatv_catalog** = "every NASA TV video IO knows about for this mission" (step 2c)
 - **io_photo_catalog** = "what is every photo IO knows about for this mission?" (comprehensive inventory)
 
-_Note: only `io_photo_catalog` is currently produced on disk. Steps 2c (`io_found`/`io_notfound`) and 2c2 (`io_video_catalog`) are planned but the scripts have not been written yet._
-
-The cross-reference search (step 2c) is a targeted lookup. The catalogs (steps 2c2, 3a2) are bulk scrapes of the entire collection. They answer different questions.
+_Note: only `io_photo_catalog` and `io_nasatv_catalog` are currently produced on disk. The IA cross-reference search (`io_found`/`io_notfound`) is planned but not yet written._
 
 ---
 
