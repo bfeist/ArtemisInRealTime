@@ -81,8 +81,18 @@ def search_io_collection(
         total = data["results"]["response"]["numfound"]
         all_docs.extend(docs)
 
+        pages = max(1, math.ceil(total / _RPP)) if total > _RPP else 1
+        print(
+            f"    IO collection CID {collection_cid}: {total} total, "
+            f"{pages} page(s) of {_RPP}",
+            flush=True,
+        )
+        print(
+            f"\r    Progress: {len(all_docs):>6}/{total} (page 1/{pages})",
+            end="", flush=True,
+        )
+
         if total > _RPP:
-            pages = math.ceil(total / _RPP)
             for page in range(1, pages):
                 page_url = f"{IO_API_BASE}/{path_params}&sr={page * _RPP + 1}?key={key}&format=json"
                 try:
@@ -90,10 +100,15 @@ def search_io_collection(
                     pr.raise_for_status()
                     all_docs.extend(pr.json()["results"]["response"]["docs"])
                 except requests.RequestException as e:
-                    print(f"    Warning: page {page + 1} failed: {e}")
+                    print(f"\n    Warning: page {page + 1} failed: {e}", flush=True)
+                print(
+                    f"\r    Progress: {len(all_docs):>6}/{total} "
+                    f"(page {page + 1}/{pages})",
+                    end="", flush=True,
+                )
                 time.sleep(0.3)
 
-        print(f"    IO collection CID {collection_cid}: {total} total, {len(all_docs)} fetched")
+        print(flush=True)  # newline after the carriage-return progress line
         return all_docs
 
     except requests.RequestException as e:

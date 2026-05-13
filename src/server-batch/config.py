@@ -173,6 +173,11 @@ class MissionConfig:
         return self.data_dir / "processed" / "exif"
 
     @property
+    def eol_json_path(self) -> Path:
+        """EOL metadata manifest (step 3g) — intermediate, not for web."""
+        return self.data_dir / "processed" / "eol_photos.json"
+
+    @property
     def photos_ledger_path(self) -> Path:
         return self.data_dir / "processed" / "photos_ledger.jsonl"
 
@@ -241,7 +246,7 @@ MISSIONS: dict[str, MissionConfig] = {
     "artemis-ii": MissionConfig(
         name="Artemis II",
         slug="artemis-ii",
-        mission_start="2026-04-01",
+        mission_start="2026-03-31",
         mission_end="2026-04-11",
         ia_subject_tag="Artemis II Resource Reel",
         ia_collections=["Artemis-II"],

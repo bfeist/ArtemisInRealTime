@@ -71,13 +71,26 @@ cameras (art002e/a) are already UTC and don't need correction.
 
 Date priority that we ultimately want in the merged record (highest wins):
 
-1. EXIF `DateTimeOriginal + OffsetTimeOriginal` from the actual file on disk
-   (NEF or downloaded JPEG)
-2. IO NHQ second-precision `md_creation_date` (after timezone correction)
-3. IO ground-photographer date with a known timezone offset applied
-4. IO onboard-camera `md_creation_date` (already UTC)
-5. Flickr `datetaken` with offset applied
-6. images.nasa.gov `date_created` (day-precision fallback)
+1. **`exif_offset`** — EXIF `DateTimeOriginal` + an offset tag (any of
+   `OffsetTimeOriginal`, `OffsetTime`, `OffsetTimeDigitized`) from the actual
+   file on disk (NEF or downloaded JPEG). Sub-second when `SubSecTimeOriginal`
+   is present.
+2. **`io_nhq`** — second-precision date from `io_nhq_photos_found.jsonl`.
+3. **`io_exif`** — IO-scraped per-photo EXIF (`io_photo_exif.jsonl`):
+   `DateCreated` (sub-second), `DigitalCreationDate`+`DigitalCreationTime`,
+   or `DateTimeOriginal` paired with a known offset. **Deliberately ignores
+   IO's `GMT` field** — IO routinely populates that column with the camera's
+   local-clock time mislabelled as GMT (the whole reason
+   `photo-time-overrides.json` exists), so without an explicit offset on the
+   timestamp itself we can't tell true UTC apart from mislabelled local.
+   *This caveat is IO-specific — a `GMT` tag inside a real on-disk EXIF
+   payload (e.g. a GoPro makernote) is unrelated.*
+4. **`io_corrected`** — IO `md_creation_date` with TZ correction applied.
+5. **`io_onboard`** — IO `md_creation_date` for `art002e/a` (already UTC) or
+   from `photo-datetime-overrides.json`.
+6. **`flickr`** — `datetaken` with offset applied.
+7. **`nasa_images`** — `date_created` / `date_taken` (day-precision fallback).
+8. **`eol`** — `dateTaken` from EOL JSON (last resort).
 
 ### Quality tiers we publish
 
@@ -228,7 +241,7 @@ Issues this layout has caused:
 
 ## Where We Want to Go
 
-The refactor target — described here as a shape, not yet an implementation:
+The refactor is built. The shape below describes what's actually on disk:
 
 ### A. Single raw photos root
 
@@ -279,7 +292,9 @@ membership:
   // dropped or rewritten tags compared with the raw original.
   // We capture *every* EXIF tag the camera/source wrote — top-level fields
   // are aliases populated from whichever group carries them, so downstream
-  // code can read a uniform schema.
+  // code can read a uniform schema. The DateTimeOriginalUTC alias carries
+  // millisecond precision when the source has SubSecTimeOriginal — important
+  // for ordering bracket-burst frames that share the same wall-clock second.
   "copies": {
     "raw_crew": {
       "path": "F:/_repos/ArtemisInRealTime_assets/artemis-ii/raw/photos/5_Crew-Captured-Imagery/FD_02/D5_15/art002e000168.NEF",
@@ -288,12 +303,12 @@ membership:
         "DateTimeOriginal":     "2026:04:02 20:55:15",
         "OffsetTimeOriginal":   "+00:00",
         "ExposureBiasValue":     0.0,
-        "DateTimeOriginalUTC":  "2026-04-02T20:55:15Z",
+        "DateTimeOriginalUTC":  "2026-04-02T20:55:15.150Z",   // sub-second!
         // Full grouped EXIF straight from ExifTool:
-        "EXIF":       { "ExposureTime": 0.0025, "FNumber": 16.0, "ISO": 400, "FocalLength": 80.0, "Make": "NIKON CORPORATION", "Model": "NIKON D5", ... },
+        "EXIF":       { "ExposureTime": 0.0025, "FNumber": 16.0, "ISO": 400, "FocalLength": 80.0, "Make": "NIKON CORPORATION", "Model": "NIKON D5", "SubSecTimeOriginal": "15", ... },
         "MakerNotes": { "ShootingMode": "Continuous, Exposure Bracketing", "AutoBracketOrder": "0,-,+", "ExposureBracketValue": 0, "TimeZone": "+00:00", ... },
         "XMP":        { ... },
-        "Composite":  { "Aperture": 16.0, "ShutterSpeed": 0.0025, "LightValue": 14.6, ... }
+        "Composite":  { "Aperture": 16.0, "ShutterSpeed": 0.0025, "LightValue": 14.6, "SubSecDateTimeOriginal": "2026:04:02 20:55:15.15", ... }
       }
     },
     "eol": {
@@ -328,83 +343,171 @@ internal tracking ("what NEFs are we sitting on that haven't been cleared
 yet?") and let us light them up automatically as soon as they appear in a
 public archive on a future re-run.
 
-### C. A web-tier generation step
+### C. Web outputs (the only thing that ships to the internet)
 
-Single step that walks the ledger and, for every NASA ID that is `exported`
-and has at least one raw asset, emits the three published tiers:
-
-```
-F:\_repos\ArtemisInRealTime_assets\{mission}\web\photos\
-  thumb\{nasa_id}.jpg     # ~400 px
-  lowres\{nasa_id}.jpg    # ~1024 px
-  hires\{nasa_id}.jpg     # ~2048-4096 px
-```
-
-Source-of-truth precedence for tier generation:
-
-1. **NEF** (best — full sensor, raw RGB). The NEFs are unedited digital
-   negatives, so good color rendering matters more than convenience here.
-   Candidate tools: `rawpy` (libraw) for the decode + sensible defaults
-   (camera white balance, mild tone curve), `Pillow` for the resize.
-   `darktable-cli` is the alternative if `rawpy`'s defaults don't look
-   close enough to what NASA publishes.
-2. **EOL large JPEG** (for crew photos with no local NEF)
-3. **Flickr original** — request the largest size available; we want as
-   close to "original" as we can get, even for press/PR photos, so the
-   tier-generation has a good basis to downscale from.
-4. **images.nasa.gov original** (`~orig` asset, same reasoning)
-5. **IA bulk-upload JPEG**
-
-**Bracket sets get an extra tier.** When a `bracket.set_id` has all three
-member NEFs on disk and is exported, we additionally emit:
+Everything under `mission.web_dir` is what the website serves; nothing else
+is published.
 
 ```
-hires_hdr\{set_id}.jpg    # HDR-merged composite of the 3 frames
+F:\_repos\ArtemisInRealTime_assets\{mission}\web\
+  photos.json                       # slim per-photo list (heroes only) — frontend index
+  photos\
+    brackets.json                   # all bracket sets, indexed by setId
+    exif\{nasa_id}.json             # full EXIF dump per photo (lazy-loaded by frontend)
+    thumb\{nasa_id}.jpg             # ~400 px long edge — gallery thumbnails
+    lowres\{nasa_id}.jpg            # ~1024 px long edge — inline timeline view
+    hires\{nasa_id}.jpg             # FULL source resolution — lightbox / detail
 ```
 
-Use the metered frame as the visible default in galleries; offer the HDR
-composite (and the individual darker/lighter frames) as alternates in the
-detail view. Likely tool: `align_image_stack + enfuse` (Hugin tools) for an
-"exposure fusion" look — natural rather than over-cooked HDR. We can leave
-this off in v1 of the refactor and turn it on later — the per-frame tiers
-work without it.
+**`photos.json`** entries (one per published *hero* — bracket alternates
+collapse onto their hero):
+
+```jsonc
+{
+  "id":          "art002e000188",
+  "title":       "...",
+  "description": "...",
+  "date":        "2026-04-02T20:55:15.150Z",   // best-known UTC, sub-second when possible
+  "dateSource":  "exif_offset",                // provenance: exif_offset | io_nhq | io_corrected | io_onboard | flickr | nasa_images
+  "thumbUrl":    "/photos/thumb/art002e000188.jpg",
+  "imgUrl":      "/photos/lowres/art002e000188.jpg",
+  "hiResUrl":    "/photos/hires/art002e000188.jpg",
+  "exifUrl":     "/photos/exif/art002e000188.json",   // lazy-loaded full EXIF
+  "exportedIn":  ["eol"],
+  "bracket":     {                              // present iff this hero is part of an AEB set
+    "setId":      "art002e000188",
+    "isHero":     true,
+    "alternates": ["art002e000189", "art002e000190"]   // other set members
+  }
+}
+```
+
+**`brackets.json`** is a `{setId: bracketRecord}` map for the frontend's
+"see darker / lighter" toggle:
+
+```jsonc
+{
+  "art002e000188": {
+    "setId":           "art002e000188",
+    "hero":            "art002e000188",
+    "members":         ["art002e000188", "art002e000189", "art002e000190"],
+    "evs":             [0.0, -1.0, 1.0],
+    "detectionSource": "shooting_mode"          // makernote-confirmed AEB
+  }
+}
+```
+
+**`exif/{nasa_id}.json`** holds the full grouped EXIF (all groups: EXIF,
+MakerNotes, XMP, Composite, etc.) plus a `_meta` block:
+
+```jsonc
+{
+  // Grouped EXIF straight from the highest-priority copy (raw_crew preferred
+  // — it has the Nikon makernotes that EOL's re-encode strips).
+  "DateTimeOriginal":    "2026:04:02 20:55:15",
+  "DateTimeOriginalUTC": "2026-04-02T20:55:15.150Z",
+  "EXIF":       { ... },
+  "MakerNotes": { ... },
+  "XMP":        { ... },
+  "Composite":  { ... },
+
+  // Derived metadata for the frontend
+  "_meta": {
+    "nasaId":     "art002e000188",
+    "exifSource": "raw_crew",              // which copy this EXIF came from
+    "date":       "2026-04-02T20:55:15.150Z",
+    "dateSource": "exif_offset",
+    "exported":   true,
+    "exportedIn": ["eol"]
+  }
+}
+```
+
+#### Tier generation details (step 4d)
+
+For every NASA ID that is `exported` and has at least one local copy, the
+tier writer:
+
+- Pulls the **source JPEG bytes** once — embedded preview from the NEF via
+  ExifTool for `raw_crew`, or the source file directly for JPEG sources.
+- Writes those bytes **verbatim** to `hires/{nasa_id}.jpg` (no re-encode,
+  no downscale — same byte size as the source). Full sensor resolution:
+  5568×3712 for D5, 8256×5504 for Z9.
+- Decodes once and Lanczos-downscales for `lowres/{nasa_id}.jpg` (~1024 px)
+  and `thumb/{nasa_id}.jpg` (~400 px), re-encoding at JPEG q=88/q=85.
+
+Source-of-truth precedence (best JPEG quality wins):
+
+1. **EOL JPEG** — NASA's reprocessed, higher-quality JPEG (~6 MB at full
+   res). When present, this is the definitive published version.
+2. **`nasa_images` original** — `~orig` asset from images.nasa.gov.
+3. **`flickr` original** — `url_o` from the Flickr API.
+4. **NEF embedded JPEG via ExifTool** — what NASA itself starts from when
+   building EOL. Lower JPEG quality (~2 MB at full res) than EOL but works
+   for crew photos not yet on EOL, including Z9 HE\*-compressed NEFs that
+   libraw 0.22.x can't decode.
+5. **IA stills JPEG** (last resort fallback).
+
+(The NEFs are valuable mainly for their **EXIF makernotes**, not as a tier
+source — EOL strips Nikon's `ShootingMode`, `ExposureBracketValue`,
+`AutoBracketOrder`, and `MakerNotes:TimeZone` during its re-encode, but we
+need those for high-confidence bracket detection (4b) and D5 ground-photographer
+TZ correction (4c). raw_crew is now an EXIF-enrichment layer rather than a
+tier source.)
 
 Skip any NASA ID that is not exported. Idempotent — skip if all three tiers
-already exist on disk.
+already exist on disk and are newer than the source.
 
-### D. A trimmed pipeline shape
+**HDR composite generation** was prototyped (cv2 Mertens exposure fusion)
+and shelved. The crew brackets are misaligned (zero-G camera drift between
+frames) and AlignMTB couldn't compensate; full feature-matching alignment
+would be required, which combined with the marginal visual benefit on
+most scenes wasn't worth the engineering cost. The frontend exposes
+bracket alternates via `bracket.alternates` so users can flip between the
+darker/metered/lighter frames manually instead.
+
+### D. The pipeline as built
 
 ```
-RAW INTAKE          (independent, parallel)
-  ├─ ia_stills_download           → raw/photos/ia_stills/
-  ├─ flickr_pull                  → raw/photos/flickr/      + flickr_meta.json
-  ├─ nasa_images_pull             → raw/photos/nasa_images/ + nasa_images_meta.json
-  ├─ eol_metadata + eol_download  → raw/photos/eol/         + eol_meta.json
-  └─ (manual) crew NEF dump       → raw/photos/nef/
+RAW INTAKE                 (independent, parallel)
+  ├─ 3a   ia_stills_download         → raw/photos/ia_stills/
+  ├─ 3b   flickr_albums               → raw/photos/flickr/album_metadata.json
+  ├─ 3e   images_nasa_gov             → raw/photos/images_nasa_gov/catalog.json
+  ├─ 3f   download_photos             → raw/photos/flickr/ + raw/photos/images_nasa_gov/
+  ├─ 3g   eol_json                     → processed/eol_photos.json (EOL metadata)
+  ├─ 3h   download_eol_photos          → raw/photos/eol/jpeg_high/
+  ├─ 3i   eol_rename_canonical         → renames EOL JPEGs to canonical NASA IDs
+  └─ (manual) crew raws drop            → raw/photos/5_Crew-Captured-Imagery/**
 
-METADATA INTAKE     (independent, parallel)
-  ├─ io_photo_catalog             → io_cache/io_photo_catalog.jsonl
-  ├─ io_exif_scrape               → io_cache/photo-time-overrides.json   (TZ fix)
-  └─ extract_local_exif           → io_cache/exif/{source}/{nasa_id}.json
-                                                                          ↑ per-copy EXIF
-                                                                            (NEF + each JPEG copy)
+METADATA INTAKE            (independent, parallel)
+  ├─ 3a2  io_photo_catalog            → io_cache/io_photo_catalog.jsonl
+  ├─ 3a3  io_exif_scrape              → io_cache/photo-{time,datetime}-overrides.json
+  ├─ 3e2  io_nhq_lookup                → io_cache/io_nhq_photos_*.jsonl
+  └─ 4a   extract_all_exif             → processed/exif/{source}/{nasa_id}.json
+                                                                  ↑ per-copy EXIF, full
+                                                                    schema incl. makernotes
 
-LEDGER BUILD        (depends on everything above)
-  ├─ build_ledger                 → processed/photos_ledger.jsonl
-  └─ detect_brackets              → updates ledger with bracket.set_id / members / position
+LEDGER + BRACKETS          (depends on intake + 4a)
+  ├─ 4b   detect_brackets              → io_cache/bracket_sets.jsonl
+  └─ 4c   build_ledger                 → processed/photos_ledger.jsonl
+                                          (canonical per-NASA-ID merge)
 
-WEB BUILD           (depends on ledger)
-  ├─ generate_tiers               → web/photos/{thumb,lowres,hires}/{nasa_id}.jpg
-  ├─ generate_hdr (optional)      → web/photos/hires_hdr/{set_id}.jpg
-  └─ web_photos_json              → web/photos.json   (points at our own tiers)
+WEB BUILD                  (depends on ledger)
+  ├─ 4d   generate_tiers               → web/photos/{thumb,lowres,hires}/{nasa_id}.jpg
+  └─ 4e   web_photos_json              → web/photos.json
+                                          web/photos/brackets.json
+                                          web/photos/exif/{nasa_id}.json
 ```
 
-The current 3a/3a2/3a3/3e/3e2/3f/3f2/3g/3h/3k/3l zoo collapses into roughly
-these named steps. The numbering can go away in favour of names.
+`raw/`, `processed/`, and `io_cache/` stay local — only `web/` ships to the
+internet. Tier files are bytes-on-disk, JSON files are bytes-on-disk, and
+the frontend mounts `web/photos/` at `/photos/` so all URLs are
+`/photos/{thumb,lowres,hires,exif}/{nasa_id}.{jpg,json}`.
 
-Bracket detection runs **after** EXIF extraction (it needs
-`ExposureBiasValue` and the makernote bracket tags) and **before** ledger
-finalization, so the bracket-cluster fields land in the ledger record.
+Bracket detection runs **after** per-copy EXIF extraction (it needs
+`MakerNotes:ShootingMode`, `ExposureBracketValue`, and `SubSecTimeOriginal`
+for sub-second ordering) and **before** ledger finalization, so the
+bracket-cluster fields land in the ledger record.
 
 ---
 

@@ -3,20 +3,27 @@
 Walks the ledger; for every record with `exported == True` and at least one
 non-null copy, emits the three published tier JPEGs into:
 
-    {data_dir}/web/photos/thumb/{nasa_id}.jpg
-    {data_dir}/web/photos/lowres/{nasa_id}.jpg
-    {data_dir}/web/photos/hires/{nasa_id}.jpg
+    {data_dir}/web/photos/thumb/{nasa_id}.jpg     # ~400 px long edge
+    {data_dir}/web/photos/lowres/{nasa_id}.jpg    # ~1024 px long edge
+    {data_dir}/web/photos/hires/{nasa_id}.jpg     # full source resolution (no downscale)
 
 Source-of-truth precedence per record:
     raw_crew (NEF/DNG) → eol → flickr → nasa_images → ia_stills
 
 Tooling:
-- raw_crew: rawpy.imread → postprocess(use_camera_wb=True, no_auto_bright=True)
-            → numpy ndarray → PIL.Image.fromarray
-- JPEG sources: PIL.Image.open
+- raw_crew (NEF/DNG): extract the camera-baked embedded JPEG via ExifTool
+  (`-b -JpgFromRaw`). The embedded JPEG is full sensor resolution
+  (5568×3712 for D5, 8256×5504 for Z9) with the camera's Picture Control
+  already applied — visually identical to what NASA publishes via EOL.
+  This dodges all libraw drama (Z9 HE* compression unsupported by libraw
+  0.22.x) and matches NASA's published look exactly.
+- JPEG sources (eol, flickr, nasa_images, ia_stills): read source bytes
+  directly.
 
-HDR / exposure-fusion for bracket sets is a follow-up (4d2). The per-frame
-tiers stand on their own.
+Hires is **saved verbatim** (source bytes copied byte-for-byte, no
+re-encode, no downscale) — preserves the camera's quality and matches the
+EOL portal's full-resolution publication. Thumb and lowres are decoded once
+and downscaled with Lanczos.
 
 Idempotent: skip a NASA ID if all three target files already exist AND are
 newer than the chosen source. Re-running is cheap.
@@ -25,6 +32,7 @@ newer than the chosen source. Re-running is cheap.
 import argparse
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
 from pathlib import Path
 
 from rich.console import Console
@@ -44,16 +52,21 @@ from shared.photos_ledger import LedgerRecord, load_ledger
 
 console = Console()
 
-# Tier configuration — long edge in pixels and JPEG quality.
-TIERS: list[tuple[str, int, int]] = [
+# Downscale tiers — long edge in pixels and JPEG quality.
+# `hires` is handled separately (verbatim copy, no downscale).
+DOWNSCALE_TIERS: list[tuple[str, int, int]] = [
     ("thumb",  400,  85),
     ("lowres", 1024, 88),
-    ("hires",  2048, 92),
 ]
 
-# Source precedence for tier generation
+# Source precedence for tier generation. EOL comes first because NASA's
+# reprocessed EOL JPEG is encoded at noticeably higher JPEG quality than
+# the camera's embedded preview baked into the NEF (~6 MB vs ~2 MB at the
+# same 5568×3712 dimensions). raw_crew is the fallback for crew shots not
+# yet on EOL — the embedded NEF JPEG is what the camera produced and is
+# what EOL itself starts from.
 SOURCE_PRIORITY: tuple[str, ...] = (
-    "raw_crew", "eol", "flickr", "nasa_images", "ia_stills"
+    "eol", "nasa_images", "flickr", "raw_crew", "ia_stills"
 )
 
 DEFAULT_WORKERS = 4
@@ -98,37 +111,63 @@ def _is_up_to_date(src_path: Path, dest_paths: list[Path]) -> bool:
 # ── Decoders ────────────────────────────────────────────────────────────────
 
 
-def _decode_raw_crew(path: Path):
-    """NEF/DNG → PIL.Image (RGB) via rawpy + libraw.
+_EXIFTOOL_BIN: str | None = None
 
-    Camera white balance + no auto-brighten preserves the look NASA's release
-    pipeline targets. This avoids the 'too punchy' default look of generic
-    raw converters.
-    """
-    import rawpy
-    from PIL import Image
-    with rawpy.imread(str(path)) as raw:
-        rgb = raw.postprocess(
-            use_camera_wb=True,
-            no_auto_bright=True,
-            output_bps=8,
+
+def _resolve_exiftool() -> str:
+    """Find ExifTool on PATH, with a Windows fallback to the default winget
+    install location. Cached after first lookup."""
+    global _EXIFTOOL_BIN
+    if _EXIFTOOL_BIN:
+        return _EXIFTOOL_BIN
+    import shutil
+    found = shutil.which("exiftool") or shutil.which("ExifTool")
+    if not found:
+        # Default winget (OliverBetz.ExifTool) install
+        candidate = Path.home() / "AppData/Local/Programs/ExifTool/ExifTool.exe"
+        if candidate.exists():
+            found = str(candidate)
+    if not found:
+        raise FileNotFoundError(
+            "exiftool not found on PATH. Install with `winget install OliverBetz.ExifTool`."
         )
-    return Image.fromarray(rgb)
+    _EXIFTOOL_BIN = found
+    return found
 
 
-def _decode_jpeg(path: Path):
+def _source_jpeg_bytes(source: str, path: Path) -> bytes:
+    """Return the source JPEG bytes for a record — these are written
+    byte-for-byte to the `hires` tier (no re-encode).
+
+    For `raw_crew` sources, runs ExifTool to extract the camera-baked
+    embedded full-resolution JPEG preview from the NEF/DNG. For all other
+    sources, returns the file contents directly.
+    """
+    if source == "raw_crew":
+        import subprocess
+        exiftool = _resolve_exiftool()
+        res = subprocess.run(
+            [exiftool, "-b", "-JpgFromRaw", str(path)],
+            capture_output=True,
+        )
+        if res.returncode != 0 or not res.stdout:
+            raise RuntimeError(
+                f"ExifTool returned no embedded JPEG for {path.name}: "
+                f"rc={res.returncode}, stderr={res.stderr[:200]!r}"
+            )
+        return res.stdout
+    return path.read_bytes()
+
+
+def _decode_for_downscale(jpeg_bytes: bytes):
+    """Open JPEG bytes as a PIL.Image suitable for downscaling."""
+    import io
     from PIL import Image
-    img = Image.open(path)
-    # Strip alpha / palette so JPEG save doesn't barf
+    img = Image.open(io.BytesIO(jpeg_bytes))
+    img.load()
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
     return img
-
-
-def _decode(source: str, path: Path):
-    if source == "raw_crew":
-        return _decode_raw_crew(path)
-    return _decode_jpeg(path)
 
 
 # ── Tier generation ─────────────────────────────────────────────────────────
@@ -155,14 +194,37 @@ def _generate_one(
     src_path: Path,
     dest_paths: dict[str, Path],
 ) -> tuple[str, bool, str | None]:
-    """Decode once, write all three tiers. Returns (nasa_id, ok, err)."""
+    """Write three tiers for one NASA ID. Returns (nasa_id, ok, err).
+
+    hires        — source JPEG bytes copied verbatim (no re-encode, no
+                   downscale). Preserves the camera's full-resolution Picture
+                   Control output for the lightbox view.
+    lowres/thumb — decoded once, downscaled with Lanczos, re-encoded.
+    """
+    # 1. Get source bytes (extract embedded for raw_crew, read file otherwise)
     try:
-        img = _decode(source, src_path)
+        src_bytes = _source_jpeg_bytes(source, src_path)
     except Exception as e:
-        return nasa_id, False, f"decode {source}: {e}"
+        return nasa_id, False, f"source {source}: {e}"
+
+    # 2. hires — write source bytes verbatim
+    try:
+        hires_dest = dest_paths["hires"]
+        hires_dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = hires_dest.with_suffix(hires_dest.suffix + ".part")
+        tmp.write_bytes(src_bytes)
+        tmp.replace(hires_dest)
+    except Exception as e:
+        return nasa_id, False, f"hires write: {e}"
+
+    # 3. Downscale tiers — decode once, resize and re-encode for each
+    try:
+        img = _decode_for_downscale(src_bytes)
+    except Exception as e:
+        return nasa_id, False, f"decode: {e}"
 
     try:
-        for tier_name, long_edge, quality in TIERS:
+        for tier_name, long_edge, quality in DOWNSCALE_TIERS:
             out = _resize_to_long_edge(img, long_edge)
             dest = dest_paths[tier_name]
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -170,11 +232,24 @@ def _generate_one(
             out.save(tmp, "JPEG", quality=quality, optimize=True, progressive=True)
             tmp.replace(dest)
     except Exception as e:
-        return nasa_id, False, f"save: {e}"
+        return nasa_id, False, f"downscale save: {e}"
+
     return nasa_id, True, None
 
 
 # ── Orchestrator ────────────────────────────────────────────────────────────
+
+
+def _in_window(rec, win_start: date, win_end: date) -> bool:
+    """Photo's UTC date falls within the mission window. Mirrors 4e's filter
+    so we don't waste tier work on photos that won't be published."""
+    if not rec.utc:
+        return False
+    try:
+        d = date.fromisoformat(rec.utc[:10])
+    except ValueError:
+        return False
+    return win_start <= d <= win_end
 
 
 def generate_tiers(mission: MissionConfig, workers: int) -> None:
@@ -186,12 +261,19 @@ def generate_tiers(mission: MissionConfig, workers: int) -> None:
         return
     console.print(f"  Loaded ledger: [cyan]{len(ledger):,}[/cyan] records")
 
-    # Plan work — only exported, only if we have a source, only if tiers stale.
+    win_start = date.fromisoformat(mission.mission_start)
+    win_end = date.fromisoformat(mission.mission_end)
+
+    # Plan work — only exported AND in mission window, only if we have a
+    # source, only if tiers stale.
     work: list[tuple[str, str, Path, dict[str, Path]]] = []
-    not_exported = no_source = up_to_date = 0
+    not_exported = outside_window = no_source = up_to_date = 0
     for nasa_id, rec in ledger.items():
         if not rec.exported:
             not_exported += 1
+            continue
+        if not _in_window(rec, win_start, win_end):
+            outside_window += 1
             continue
         pick = _pick_source(rec)
         if pick is None:
@@ -206,6 +288,7 @@ def generate_tiers(mission: MissionConfig, workers: int) -> None:
 
     console.print(
         f"  [dim]Skipping: {not_exported:,} not exported, "
+        f"{outside_window:,} outside window, "
         f"{no_source:,} no copy on disk, {up_to_date:,} already current.[/dim]"
     )
 

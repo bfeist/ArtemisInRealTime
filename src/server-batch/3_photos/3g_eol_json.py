@@ -10,7 +10,7 @@ for ART002. When those tables gain data in the future, re-run with --overwrite t
 pick up coordinates, timestamps, and other enrichment.
 
 API:    https://eol.jsc.nasa.gov/SearchPhotos/PhotosDatabaseAPI/
-Output: {web_dir}/eol_photos.json
+Output: {data_dir}/processed/eol_photos.json
 """
 
 import argparse
@@ -321,8 +321,8 @@ def main():
         console.print(f"[bold red]No EOL mission code configured for '{args.mission}'.[/bold red]")
         sys.exit(1)
 
-    output_dir = mission.web_dir
-    output_file = output_dir / "eol_photos.json"
+    output_file = mission.eol_json_path
+    output_dir = output_file.parent
 
     console.print(f"[bold blue]Fetching EOL data for mission {mission_code}[/bold blue]")
     console.print(f"Output: {output_file}")

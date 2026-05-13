@@ -10,6 +10,7 @@ dependencies = [
     "lxml",
     "matplotlib",
     "numpy",
+    "opencv-python",   # MergeMertens exposure fusion for HDR composites (step 4d2)
     "Pillow",
     "pydub",
     "pyexiftool",      # ExifTool subprocess wrapper — reads NEF/DNG makernotes (step 4a)

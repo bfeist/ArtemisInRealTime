@@ -70,9 +70,18 @@ def _parse_tz_offset(s: str) -> timedelta | None:
     return timedelta(hours=int(m.group(2)), minutes=int(m.group(3))) * sign
 
 
+def _format_utc(dt: datetime) -> str:
+    """Format a UTC datetime as ISO-8601 with millisecond precision when the
+    fractional part is non-zero, otherwise second precision."""
+    if dt.microsecond:
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _correct_local_as_utc(date_str: str, offset_str: str) -> str | None:
     """IO stores camera local time as UTC for ground photographers — given the
-    photographer's offset, recover true UTC. Ported from 3k_web_photos.py."""
+    photographer's offset, recover true UTC. Preserves millisecond precision
+    when the input carries it."""
     offset = _parse_tz_offset(offset_str)
     if offset is None:
         return None
@@ -80,7 +89,158 @@ def _correct_local_as_utc(date_str: str, offset_str: str) -> str | None:
         dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
-    return (dt - offset).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _format_utc((dt - offset).replace(tzinfo=None))
+
+
+# Strip a trailing "[+-]HH:MM" suffix from a time string and return both parts.
+# Examples: "13:42:57.19-04:00" → ("13:42:57.19", "-04:00")
+#           "13:42:57"           → ("13:42:57", None)
+_TZ_SUFFIX_RE = re.compile(r"([+-]\d{2}:\d{2})$")
+
+
+def _split_tz_suffix(s: str) -> tuple[str, str | None]:
+    if not s:
+        return s, None
+    m = _TZ_SUFFIX_RE.search(s)
+    if m:
+        return s[: m.start()], m.group(1)
+    return s, None
+
+
+def _io_local_to_utc(
+    date_part: str,
+    time_part: str,
+    offset_str: str,
+) -> str | None:
+    """Combine a 'YYYY:MM:DD' date, a 'HH:MM:SS[.fff]' time, and a '±HH:MM'
+    offset into a UTC ISO timestamp."""
+    offset = _parse_tz_offset(offset_str)
+    if offset is None:
+        return None
+    fmt = "%Y:%m:%d %H:%M:%S.%f" if "." in time_part else "%Y:%m:%d %H:%M:%S"
+    try:
+        local = datetime.strptime(f"{date_part} {time_part}", fmt)
+    except (ValueError, TypeError):
+        return None
+    return _format_utc(local - offset)
+
+
+def _exif_copy_to_utc(exif: dict) -> str | None:
+    """Derive true UTC from a per-copy EXIF payload (4a output).
+
+    Rules:
+      - Prefer `Composite:SubSecDateTimeOriginal` (NEF only — exiftool builds
+        this with fractional seconds) over plain `DateTimeOriginal`, so
+        bracket-burst frames that share the same wall-clock second order
+        correctly.
+      - Offset: try `OffsetTimeOriginal` (spec), then `OffsetTime`, then
+        `OffsetTimeDigitized`. Lightroom export pipelines (which most NASA
+        JPEGs go through) routinely strip the original-offset tag while
+        keeping `OffsetTime` — for stills the photographer doesn't change
+        zones between shutter and save, so they're interchangeable.
+      - Subsec: PIL emits `SubsecTimeOriginal` (lowercase 'sec', per EXIF
+        spec); ExifTool emits `SubSecTimeOriginal`. Accept both.
+    """
+    if not exif:
+        return None
+    composite_dto = (exif.get("Composite", {}) or {}).get("SubSecDateTimeOriginal")
+    plain_dto = exif.get("DateTimeOriginal") or exif.get("DateTimeDigitized")
+    subsec = (
+        exif.get("SubsecTimeOriginal")
+        or exif.get("SubSecTimeOriginal")
+        or (exif.get("EXIF", {}) or {}).get("SubSecTimeOriginal")
+    )
+    offset = (
+        exif.get("OffsetTimeOriginal")
+        or exif.get("OffsetTime")
+        or exif.get("OffsetTimeDigitized")
+    )
+    if not offset:
+        return None
+
+    def _parse_offset(s: str) -> timezone | None:
+        try:
+            sign = 1 if s.startswith("+") else -1
+            h, m = int(s[1:3]), int(s[4:6])
+            return timezone(timedelta(hours=h * sign, minutes=m * sign))
+        except (ValueError, IndexError):
+            return None
+
+    tz = _parse_offset(offset)
+    if tz is None:
+        return None
+
+    # Try the sub-second composite form first.
+    for dto, has_subsec_already in ((composite_dto, True), (plain_dto, False)):
+        if not dto:
+            continue
+        try:
+            if "." in dto:
+                local = datetime.strptime(dto, "%Y:%m:%d %H:%M:%S.%f")
+            else:
+                local = datetime.strptime(dto, "%Y:%m:%d %H:%M:%S")
+                if not has_subsec_already and subsec is not None:
+                    s = str(subsec).strip()
+                    if s.isdigit():
+                        local = local.replace(microsecond=int(s.ljust(6, "0")[:6]))
+        except ValueError:
+            continue
+        utc_dt = local.replace(tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None)
+        return _format_utc(utc_dt)
+
+    return None
+
+
+def _io_exif_to_utc(io_exif: dict, fallback_offset: str | None) -> str | None:
+    """Derive true UTC from the IO scraped per-photo EXIF (3a3 output).
+
+    Tries (highest precision first):
+      1. `DateCreated`           e.g. '2026:03:30 13:42:57.19-04:00'
+      2. `DigitalCreationDate` + `DigitalCreationTime`
+                                  e.g. '2026:03:30' + '13:42:57-04:00'
+      3. `DateTimeOriginal` + a known offset (from same record's tz_offset
+                                              or the prefix-default override)
+
+    Deliberately ignores **IO's** `GMT` field and a bare `DateTimeOriginal`
+    with no offset. IO's `GMT` column is often filled with the camera's
+    local-clock time mislabelled as GMT — the whole reason
+    `photo-time-overrides.json` exists. Without an explicit offset on the
+    timestamp itself we can't tell true UTC apart from mislabelled local.
+
+    Note: this caveat is specific to the IO-scraped EXIF (this function's
+    sole input). A `GMT` tag found inside a real on-disk EXIF payload (e.g.
+    a GoPro makernote read by 4a) is unrelated and should be trusted on its
+    own merits there if/when 4a starts reading it.
+    """
+    if not io_exif:
+        return None
+
+    dc = io_exif.get("DateCreated")
+    if dc and " " in dc:
+        date_part, rest = dc.split(" ", 1)
+        time_part, off = _split_tz_suffix(rest)
+        if off:
+            utc = _io_local_to_utc(date_part, time_part, off)
+            if utc:
+                return utc
+
+    dcd = io_exif.get("DigitalCreationDate")
+    dct = io_exif.get("DigitalCreationTime")
+    if dcd and dct:
+        time_part, off = _split_tz_suffix(dct)
+        if off:
+            utc = _io_local_to_utc(dcd, time_part, off)
+            if utc:
+                return utc
+
+    dto = io_exif.get("DateTimeOriginal")
+    if dto and " " in dto and fallback_offset:
+        date_part, time_part = dto.split(" ", 1)
+        utc = _io_local_to_utc(date_part, time_part, fallback_offset)
+        if utc:
+            return utc
+
+    return None
 
 
 def _flickr_datetaken_to_utc(datetaken: str, offset_str: str | None) -> str | None:
@@ -366,24 +526,35 @@ def _resolve_date(
     nhq_dates: dict[str, str],
     tz_overrides: dict[str, str],
     onboard_overrides: dict[str, str],
+    io_exif_records: dict[str, dict],
 ) -> None:
     """5. Apply the date-priority chain. Sets `utc` and `utc_source` in place.
 
     Priority (highest first):
-      1. exif_offset    — DateTimeOriginalUTC from any copy with OffsetTimeOriginal
+      1. exif_offset    — UTC derived from each copy's DateTimeOriginal +
+                          OffsetTime* (computed on the fly — see
+                          _exif_copy_to_utc)
       2. io_nhq         — second-precision date from io_nhq_photos_found.jsonl
-      3. io_corrected   — IO md_creation_date with TZ correction applied
-      4. io_onboard     — onboard-camera UTC from photo-datetime-overrides.json,
+      3. io_exif        — IO-scraped per-photo EXIF (DateCreated /
+                          DigitalCreationTime / DateTimeOriginal+offset).
+                          Often sub-second. Skips bare GMT — see _io_exif_to_utc.
+      4. io_corrected   — IO md_creation_date with TZ correction applied
+      5. io_onboard     — onboard-camera UTC from photo-datetime-overrides.json,
                           or IO md_creation_date for art002e/a prefixes
-      5. flickr         — Flickr datetaken (TZ-corrected if we have an offset)
-      6. nasa_images    — date_created / date_taken from images.nasa.gov
-      7. eol            — dateTaken from EOL JSON
+      6. flickr         — Flickr datetaken (TZ-corrected if we have an offset)
+      7. nasa_images    — date_created / date_taken from images.nasa.gov
+      8. eol            — dateTaken from EOL JSON
     """
-    # 1. EXIF offset — pick the first copy that has a UTC datetime.
+    # 1. EXIF offset — derive UTC on the fly from each copy's EXIF.
+    # raw_crew first because the NEF carries Composite:SubSecDateTimeOriginal
+    # (sub-second) and Nikon's MakerNotes:TimeZone alias.
     for source in ("raw_crew", "eol", "flickr", "nasa_images", "ia_stills"):
         copy = rec.copies.get(source)
-        if copy and copy.exif.get("DateTimeOriginalUTC"):
-            rec.utc = copy.exif["DateTimeOriginalUTC"]
+        if not copy or not copy.exif:
+            continue
+        utc = _exif_copy_to_utc(copy.exif)
+        if utc:
+            rec.utc = utc
             rec.utc_source = "exif_offset"
             return
 
@@ -394,10 +565,22 @@ def _resolve_date(
         rec.utc_source = "io_nhq"
         return
 
+    # 3. IO scraped EXIF — DateCreated / DigitalCreationTime carry their own
+    # offset suffix; DateTimeOriginal needs an explicit offset (from the same
+    # record's tz_offset suffix, or the prefix-default tz_overrides map).
+    io_entry = io_exif_records.get(rec.nasa_id)
+    if io_entry:
+        fallback_offset = io_entry.get("tz_offset") or tz_overrides.get(rec.nasa_id)
+        utc = _io_exif_to_utc(io_entry.get("exif") or {}, fallback_offset)
+        if utc:
+            rec.utc = utc
+            rec.utc_source = "io_exif"
+            return
+
     md_date = (rec.io or {}).get("md_creation_date", "")
     nasa_id = rec.nasa_id
 
-    # 3. IO ground-photographer with TZ override
+    # 4. IO ground-photographer with TZ override
     offset = tz_overrides.get(nasa_id)
     if md_date and offset:
         corrected = _correct_local_as_utc(md_date, offset)
@@ -497,7 +680,7 @@ def build_ledger(mission: MissionConfig) -> None:
 
     # 2. Public-source intake
     eol_marked, eol_files = _add_eol(
-        records, mission.web_dir / "eol_photos.json", mission.photos_eol
+        records, mission.eol_json_path, mission.photos_eol
     )
     console.print(
         f"  EOL:               [cyan]{eol_marked:>6}[/cyan] exported "
@@ -556,8 +739,18 @@ def build_ledger(mission: MissionConfig) -> None:
         with open(onboard_path, "r", encoding="utf-8") as f:
             onboard_overrides = {k.lower(): v for k, v in json.load(f).items()}
 
+    io_exif_records: dict[str, dict] = {}
+    io_exif_path = mission.io_cache / "io_photo_exif.jsonl"
+    if io_exif_path.exists():
+        for entry in load_jsonl(io_exif_path):
+            nid = (entry.get("nasa_id") or "").lower()
+            if nid:
+                io_exif_records[nid] = entry
+
     for rec in records.values():
-        _resolve_date(rec, nhq_dates, tz_overrides, onboard_overrides)
+        _resolve_date(
+            rec, nhq_dates, tz_overrides, onboard_overrides, io_exif_records
+        )
 
     # 6. Bracket sets
     bracket_attached = _attach_brackets(records, mission.bracket_sets_path)

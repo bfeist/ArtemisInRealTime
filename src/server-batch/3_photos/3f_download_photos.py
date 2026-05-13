@@ -30,31 +30,56 @@ NASA_ASSETS_BASE = "https://images-assets.nasa.gov/image"
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
-def _download(url: str, dest: Path, desc: str | None = None) -> bool:
-    """Download url → dest with a progress bar. Skip if dest already exists."""
+def _download(url: str, dest: Path, desc: str | None = None,
+              max_retries: int = 5) -> bool:
+    """Download url → dest with a progress bar. Skip if dest already exists.
+
+    Handles HTTP 429 (Too Many Requests) with exponential backoff: respects
+    the Retry-After header when present, otherwise waits 5s × 2^attempt
+    (5s, 10s, 20s, 40s, 80s) before retrying.
+    """
     if dest.exists():
         return True
     dest.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        resp = requests.get(url, stream=True, timeout=120)
-        resp.raise_for_status()
-        total = int(resp.headers.get("content-length", 0))
-        with open(dest, "wb") as f, tqdm(
-            total=total,
-            unit="B",
-            unit_scale=True,
-            desc=desc or dest.name,
-            leave=False,
-        ) as bar:
-            for chunk in resp.iter_content(chunk_size=65536):
-                f.write(chunk)
-                bar.update(len(chunk))
-        return True
-    except requests.RequestException as e:
-        print(f"    Error downloading {url}: {e}")
-        if dest.exists():
-            dest.unlink()
-        return False
+
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, stream=True, timeout=120)
+            if resp.status_code == 429:
+                # Honor Retry-After header if the server provided one,
+                # otherwise back off exponentially.
+                retry_after = resp.headers.get("Retry-After")
+                wait = (
+                    int(retry_after)
+                    if retry_after and retry_after.isdigit()
+                    else 5 * (2 ** attempt)
+                )
+                resp.close()
+                if attempt == max_retries - 1:
+                    print(f"    429 for {url}; gave up after {max_retries} retries")
+                    return False
+                print(f"    429 for {desc or dest.name}; sleeping {wait}s (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            total = int(resp.headers.get("content-length", 0))
+            with open(dest, "wb") as f, tqdm(
+                total=total,
+                unit="B",
+                unit_scale=True,
+                desc=desc or dest.name,
+                leave=False,
+            ) as bar:
+                for chunk in resp.iter_content(chunk_size=65536):
+                    f.write(chunk)
+                    bar.update(len(chunk))
+            return True
+        except requests.RequestException as e:
+            print(f"    Error downloading {url}: {e}")
+            if dest.exists():
+                dest.unlink()
+            return False
+    return False
 
 
 def _nasa_orig_url(nasa_id: str) -> str | None:
@@ -149,7 +174,7 @@ def download_flickr_originals(mission: MissionConfig) -> None:
 
         if i % 50 == 0:
             print(f"    [{i}/{total}] downloaded={downloaded} skipped={skipped} collisions={collisions}")
-        time.sleep(0.1)
+        time.sleep(0.5)   # be polite to live.staticflickr.com
 
     print(
         f"\n  Flickr done: {downloaded} downloaded, {skipped} already present"

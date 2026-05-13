@@ -109,12 +109,12 @@ Assets live outside the repo in a sibling directory (`../ArtemisInRealTime_asset
 │   │       ├── photo-datetime-overrides.json
 │   │       ├── io_nhq_photos_found.jsonl
 │   │       ├── io_nhq_photos_notfound.jsonl
-│   │       └── bracket_sets.jsonl         # AEB sets (step 4b)
+│   │       ├── bracket_sets.jsonl         # AEB sets (step 4b)
+│   │       └── eol_photos.json            # EOL metadata (step 3g)
 │   └── web/                       # Web-ready outputs
 │       ├── comm.json
 │       ├── videoIA.json
 │       ├── videoYt.json
-│       ├── eol_photos.json                # EOL metadata (step 3g)
 │       ├── photos.json                    # Frontend photo list (step 4e)
 │       └── photos/                        # Tier JPEGs (step 4d)
 │           ├── thumb/{nasa_id}.jpg
@@ -841,17 +841,17 @@ Scripts accept `--mission artemis-i` or `--mission artemis-ii`. The `run_all.py`
 7. 2f_transcribe.py # Transcribe YouTube video audio (GPU)
 8. 2g_web_video.py # Generate video JSON
 
-9. 3a_ia_stills_download.py     # Download 62 JPEGs from Artemis-I-Still-Imagery
-10. 3a2_io_photo_catalog.py     # Scrape IO flight photo collections
-11. 3a3_io_exif_scrape.py       # Ground-camera TZ corrections
-12. 3b_flickr_albums.py         # Fetch Flickr album metadata
-13. 3e_images_nasa_gov.py       # Catalog images.nasa.gov
-14. 3e2_io_nhq_lookup.py        # NHQ second-precision dates
-15. 3f_download_photos.py       # Download Flickr + images.nasa.gov originals
-16. 4a_extract_all_exif.py      # Per-copy EXIF
-17. 4c_build_ledger.py          # Build canonical ledger (4b skipped — no crew raws)
-18. 4d_generate_tiers.py        # Generate web tier JPEGs
-19. 4e_web_photos_json.py       # Emit web/photos.json
+9. 3a_ia_stills_download.py # Download 62 JPEGs from Artemis-I-Still-Imagery
+10. 3a2_io_photo_catalog.py # Scrape IO flight photo collections
+11. 3a3_io_exif_scrape.py # Ground-camera TZ corrections
+12. 3b_flickr_albums.py # Fetch Flickr album metadata
+13. 3e_images_nasa_gov.py # Catalog images.nasa.gov
+14. 3e2_io_nhq_lookup.py # NHQ second-precision dates
+15. 3f_download_photos.py # Download Flickr + images.nasa.gov originals
+16. 4a_extract_all_exif.py # Per-copy EXIF
+17. 4c_build_ledger.py # Build canonical ledger (4b skipped — no crew raws)
+18. 4d_generate_tiers.py # Generate web tier JPEGs
+19. 4e_web_photos_json.py # Emit web/photos.json
 
 ```
 
@@ -873,20 +873,20 @@ Scripts accept `--mission artemis-i` or `--mission artemis-ii`. The `run_all.py`
 11. 2f2_comm_yt_sync.py # Sync comm transcripts with YouTube timelines
 12. 2g_web_video.py # Generate video JSON
 
-13. 3a_ia_stills_download.py    # Download still imagery from IA (if collection exists)
-14. 3a2_io_photo_catalog.py     # Scrape IO flight photo collections (~43,000 photos)
-15. 3a3_io_exif_scrape.py       # Ground-camera TZ corrections + onboard datetimes
-16. 3b_flickr_albums.py         # Fetch Flickr album metadata (NASA Johnson + NASA HQ)
-17. 3e_images_nasa_gov.py       # Catalog images.nasa.gov
-18. 3e2_io_nhq_lookup.py        # Reverse-lookup NHQ photos in IO for second-precision dates
-19. 3f_download_photos.py       # Download Flickr + images.nasa.gov originals
-20. 3g_eol_json.py              # Fetch EOL crew photography metadata (~12,000 entries)
-21. 3h_download_eol_photos.py   # Download EOL large JPEGs to disk
-22. 4a_extract_all_exif.py      # Per-copy EXIF (raw_crew via ExifTool, JPEGs via PIL)
-23. 4b_detect_brackets.py       # Detect AEB bracket sets from EXIF
-24. 4c_build_ledger.py          # Build canonical per-NASA-ID ledger
-25. 4d_generate_tiers.py        # Generate web tier JPEGs (thumb/lowres/hires)
-26. 4e_web_photos_json.py       # Emit web/photos.json from the ledger
+13. 3a_ia_stills_download.py # Download still imagery from IA (if collection exists)
+14. 3a2_io_photo_catalog.py # Scrape IO flight photo collections (~43,000 photos)
+15. 3a3_io_exif_scrape.py # Ground-camera TZ corrections + onboard datetimes
+16. 3b_flickr_albums.py # Fetch Flickr album metadata (NASA Johnson + NASA HQ)
+17. 3e_images_nasa_gov.py # Catalog images.nasa.gov
+18. 3e2_io_nhq_lookup.py # Reverse-lookup NHQ photos in IO for second-precision dates
+19. 3f_download_photos.py # Download Flickr + images.nasa.gov originals
+20. 3g_eol_json.py # Fetch EOL crew photography metadata (~12,000 entries)
+21. 3h_download_eol_photos.py # Download EOL large JPEGs to disk
+22. 4a_extract_all_exif.py # Per-copy EXIF (raw_crew via ExifTool, JPEGs via PIL)
+23. 4b_detect_brackets.py # Detect AEB bracket sets from EXIF
+24. 4c_build_ledger.py # Build canonical per-NASA-ID ledger
+25. 4d_generate_tiers.py # Generate web tier JPEGs (thumb/lowres/hires)
+26. 4e_web_photos_json.py # Emit web/photos.json from the ledger
 
 ```
 

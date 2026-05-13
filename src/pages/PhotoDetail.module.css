@@ -1,0 +1,279 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 80%);
+  z-index: 100;
+  overflow-y: auto;
+  padding: 2rem 1rem;
+  display: flex;
+  justify-content: center;
+}
+
+.panel {
+  background: #1a1a1a;
+  color: #e8e8e8;
+  border-radius: 6px;
+  max-width: 1200px;
+  width: 100%;
+  height: fit-content;
+  padding: 1rem;
+  position: relative;
+  font-family: sans-serif;
+}
+
+.close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+  background: transparent;
+  border: 0;
+  color: #cccccc;
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.imageWrap {
+  background: #000000;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+  border-radius: 4px;
+}
+
+.hero {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  display: block;
+}
+
+.meta {
+  margin-bottom: 1rem;
+}
+
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+
+.id {
+  font-family: monospace;
+  font-size: 0.95rem;
+  margin-right: 0.5rem;
+}
+
+.chip {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  text-transform: lowercase;
+}
+
+.toneGreen {
+  background: #2d5a2d;
+  color: #c8f0c8;
+}
+
+.toneYellow {
+  background: #6b5a1f;
+  color: #f5e8b0;
+}
+
+.toneOrange {
+  background: #7a3d1f;
+  color: #f5c89c;
+}
+
+.toneGray {
+  background: #3a3a3a;
+  color: #d0d0d0;
+}
+
+.toneBlue {
+  background: #1f4a6b;
+  color: #b4dcf5;
+}
+
+.date {
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #aaaaaa;
+  margin-bottom: 0.4rem;
+}
+
+.title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+.description {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: #cccccc;
+  max-height: 8em;
+  overflow-y: auto;
+}
+
+.brackets {
+  margin-bottom: 1rem;
+  padding: 0.6rem;
+  background: #232323;
+  border-radius: 4px;
+}
+
+.bracketsHeader {
+  font-size: 0.8rem;
+  color: #aaaaaa;
+  margin-bottom: 0.5rem;
+}
+
+.bracketRow {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.bracketBtn {
+  background: transparent;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 110px;
+  border-radius: 3px;
+}
+
+.bracketActive {
+  border-color: #4a9eff;
+}
+
+.bracketThumb {
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  display: block;
+  border-radius: 2px;
+  background: #000000;
+}
+
+.bracketCaption {
+  font-size: 0.7rem;
+  margin-top: 0.25rem;
+  font-family: monospace;
+  color: #cccccc;
+}
+
+.heroMark {
+  color: #ffd700;
+}
+
+.exif {
+  background: #232323;
+  padding: 0.6rem;
+  border-radius: 4px;
+}
+
+.exifHeader {
+  font-size: 0.85rem;
+  color: #aaaaaa;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+}
+
+.exifStatus {
+  font-size: 0.8rem;
+  color: #888888;
+}
+
+.exifTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.exifTable td {
+  padding: 4px 6px;
+  vertical-align: top;
+  border-bottom: 1px solid #2e2e2e;
+}
+
+.exifTable td:first-child {
+  color: #888888;
+  font-family: monospace;
+  font-size: 0.75rem;
+  width: 110px;
+  text-transform: uppercase;
+}
+
+.rawToggle {
+  margin-top: 0.5rem;
+  background: #2e2e2e;
+  border: 1px solid #444444;
+  color: #cccccc;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.exifDetails {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.exifSection {
+  background: #1a1a1a;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.exifSectionToggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  background: #1e1e1e;
+  border: 0;
+  color: #d0d0d0;
+  padding: 6px 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  font-family: monospace;
+}
+
+.exifSectionToggle:hover {
+  background: #2a2a2a;
+}
+
+.exifSectionArrow {
+  font-size: 0.7rem;
+  width: 0.8em;
+  flex-shrink: 0;
+}
+
+.exifSectionCount {
+  margin-left: auto;
+  font-size: 0.65rem;
+  color: #666666;
+  font-weight: 400;
+}
+
+.nestedValue {
+  word-break: break-all;
+  font-size: 0.7rem;
+  color: #999999;
+}

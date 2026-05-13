@@ -50,6 +50,7 @@ STEPS = [
     ("4c", "3_photos.4c_build_ledger",     "Build canonical per-NASA-ID photo ledger", None),
     ("4d", "3_photos.4d_generate_tiers",   "Generate web tier JPEGs (thumb/lowres/hires)", None),
     ("4e", "3_photos.4e_web_photos_json",  "Emit web/photos.json from the ledger", None),
+    ("4f", "3_photos.4f_cleanup_web",      "Delete stale web/ files (run after 4e)", None),
 ]
 
 

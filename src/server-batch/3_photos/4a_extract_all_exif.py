@@ -7,7 +7,9 @@ one EXIF JSON per (source, nasa_id) pair under
 The ledger build (step 4c) embeds these blocks directly under
 `copies[source].exif`, so the keys here become the EXIF payload the frontend
 ultimately reads. Bracket detection (step 4b) keys off of `ExposureBiasValue`
-and `BracketShotNumber` from this output.
+and `BracketShotNumber` from this output. UTC derivation (DateTimeOriginal +
+offset → true UTC) is **not** done here — that lives in 4c, so the rule can
+change without forcing a full per-copy re-extract.
 
 Tooling:
 - raw_crew (NEF + DNG) → ExifTool (via pyexiftool). PIL doesn't reliably read
@@ -23,7 +25,6 @@ is older than the JSON (re-encoded source files trigger re-extraction).
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -54,26 +55,6 @@ _JPEG_EXTS = {".jpg", ".jpeg", ".tif", ".tiff", ".png"}
 # ── EXIF normalization ───────────────────────────────────────────────────────
 
 
-def _to_utc_iso(dto: str | None, oto: str | None) -> str | None:
-    """DateTimeOriginal + OffsetTimeOriginal → UTC ISO-8601 string.
-
-    Returns None if either field is missing or unparseable. Format ported from
-    the old 3f2_extract_photo_exif.py — handles `'%Y:%m:%d %H:%M:%S'` + `±HH:MM`.
-    """
-    if not dto or not oto:
-        return None
-    try:
-        local_dt = datetime.strptime(dto, "%Y:%m:%d %H:%M:%S")
-        sign = 1 if oto.startswith("+") else -1
-        h, m = int(oto[1:3]), int(oto[4:6])
-        tz = timezone(timedelta(hours=h * sign, minutes=m * sign))
-        return local_dt.replace(tzinfo=tz).astimezone(timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-    except (ValueError, IndexError):
-        return None
-
-
 def _coerce(value):
     """Normalize EXIF values for JSON. PIL returns IFDRational, bytes, etc."""
     if value is None:
@@ -94,14 +75,6 @@ def _coerce(value):
     if isinstance(value, (list, tuple)):
         return [_coerce(v) for v in value]
     return value
-
-
-def _attach_utc(payload: dict) -> dict:
-    """Add `DateTimeOriginalUTC` if we can derive true UTC from offset."""
-    utc = _to_utc_iso(payload.get("DateTimeOriginal"), payload.get("OffsetTimeOriginal"))
-    if utc:
-        payload["DateTimeOriginalUTC"] = utc
-    return payload
 
 
 # ── Source-specific extractors ──────────────────────────────────────────────
@@ -131,7 +104,7 @@ def _extract_jpeg_exif(path: Path) -> dict | None:
         if v is None or v == "":
             continue
         payload[name] = v
-    return _attach_utc(payload)
+    return payload
 
 
 def _normalize_exiftool_payload(raw: dict) -> dict:
@@ -143,7 +116,7 @@ def _normalize_exiftool_payload(raw: dict) -> dict:
       - DateTimeOriginal  ← EXIF:DateTimeOriginal
       - OffsetTimeOriginal ← EXIF:OffsetTimeOriginal OR MakerNotes:TimeZone
       - ExposureBiasValue / ExposureCompensation
-      - DateTimeOriginalUTC (computed from the above when possible)
+    UTC derivation happens in 4c, not here.
     """
     nested: dict[str, dict] = {}
     flat_pairs: list[tuple[str, object]] = []   # for ungrouped keys (e.g. SourceFile)
@@ -190,7 +163,7 @@ def _normalize_exiftool_payload(raw: dict) -> dict:
     if ebv is not None:
         out["ExposureBiasValue"] = ebv
 
-    return _attach_utc(out)
+    return out
 
 
 def _batch_extract_raw_crew(
@@ -288,17 +261,24 @@ def _scan_source(
 
     `recursive=True` for raw_crew, where the on-disk layout has flight-day
     subfolders (FD_01/, FD_02/, …) under the source directory.
+
+    The per-source EXIF output dir is created lazily — only when at least
+    one source file exists — so empty source dirs don't litter
+    `processed/exif/` with empty subfolders.
     """
     if not source_dir.exists():
         return [], 0
     work: list[tuple[Path, Path]] = []
     skipped = 0
     out_dir = exif_dir / source_name
-    out_dir.mkdir(parents=True, exist_ok=True)
     iterator = source_dir.rglob("*") if recursive else source_dir.iterdir()
+    out_dir_created = False
     for f in iterator:
         if not f.is_file() or f.suffix.lower() not in accept_exts:
             continue
+        if not out_dir_created:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_dir_created = True
         nasa_id = _nasa_id_from_filename(f)
         dest = out_dir / f"{nasa_id}.json"
         if _needs_extraction(f, dest):

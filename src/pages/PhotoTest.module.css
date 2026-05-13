@@ -1,6 +1,9 @@
 .page {
   padding: 1.5rem;
   font-family: sans-serif;
+  background: #111111;
+  color: #e8e8e8;
+  min-height: 100vh;
 }
 
 .heading {
@@ -14,10 +17,108 @@
   font-size: 0.9rem;
 }
 
+.statsStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+}
+
+.statCard {
+  background: #1e1e1e;
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  min-width: 140px;
+}
+
+.statBig {
+  font-size: 1.5rem;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.statLabel {
+  font-size: 0.7rem;
+  color: #888888;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.3rem;
+}
+
+.statChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.chip {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+.toneGreen {
+  background: #2d5a2d;
+  color: #c8f0c8;
+}
+
+.toneYellow {
+  background: #6b5a1f;
+  color: #f5e8b0;
+}
+
+.toneOrange {
+  background: #7a3d1f;
+  color: #f5c89c;
+}
+
+.toneGray {
+  background: #3a3a3a;
+  color: #d0d0d0;
+}
+
+.fdSection {
+  margin-bottom: 1.5rem;
+}
+
+.fdHeading {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid #2a2a2a;
+  font-family: monospace;
+  letter-spacing: 0.05em;
+}
+
+.fdCount {
+  color: #888888;
+  font-weight: normal;
+  font-size: 0.85rem;
+}
+
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 6px;
+}
+
+.thumbBtn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.thumbWrap {
+  position: relative;
 }
 
 .thumb {
@@ -25,16 +126,69 @@
   aspect-ratio: 1;
   object-fit: cover;
   display: block;
-  border-radius: 3px;
   background: #222222;
-}
-
-.thumbLink {
-  display: block;
-  overflow: hidden;
   border-radius: 3px;
 }
 
-.thumbLink:hover .thumb {
-  opacity: 0.8;
+.thumbBtn:hover .thumb {
+  opacity: 0.85;
+}
+
+.bracketBadge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: rgb(31 74 107 / 90%);
+  color: #b4dcf5;
+  font-size: 0.85rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: monospace;
+  line-height: 1;
+}
+
+.exportBadges {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 2px;
+}
+
+.exportBadge {
+  background: rgb(0 0 0 / 70%);
+  color: #cccccc;
+  font-size: 0.65rem;
+  font-family: monospace;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
+.thumbCaption {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 2px 2px;
+  font-size: 0.65rem;
+  font-family: monospace;
+  color: #aaaaaa;
+}
+
+.chipDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.thumbTime {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

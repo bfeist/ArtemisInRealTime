@@ -12,6 +12,7 @@
     "tsc": "tsc --pretty",
     "lint": "concurrently --names \"eslint,stylelint\" \"npm run lint:js\" \"npm run lint:css\"",
     "lint:js": "eslint . --color",
+    "lint:js:fix": "eslint . --color --fix",
     "lint:css": "stylelint \"src/**/*.css\"",
     "lint:css:fix": "stylelint \"src/**/*.css\" --fix",
     "test": "vitest run",

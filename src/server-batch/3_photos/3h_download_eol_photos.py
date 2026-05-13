@@ -56,7 +56,7 @@ def parse_arguments():
         "--input",
         type=Path,
         default=None,
-        help="Path to eol_photos.json. Defaults to the mission web_dir output from step 3g.",
+        help="Path to eol_photos.json. Defaults to the mission processed dir output from step 3g.",
     )
     parser.add_argument(
         "--workers",
@@ -94,7 +94,7 @@ def main():
     mission = MISSIONS[args.mission]
 
     # Resolve input JSON
-    input_file = args.input or (mission.web_dir / "eol_photos.json")
+    input_file = args.input or mission.eol_json_path
     if not input_file.exists():
         console.print(f"[bold red]Input file not found: {input_file}[/bold red]")
         console.print("Run step 3g first: uv run python 3_photos/3g_eol_json.py")

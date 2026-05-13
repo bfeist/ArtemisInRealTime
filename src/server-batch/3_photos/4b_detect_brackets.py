@@ -73,7 +73,12 @@ def _parse_dt(payload: dict) -> datetime | None:
     )
     if not s:
         return None
-    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y:%m:%d %H:%M:%S"):
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S.%fZ",   # sub-second UTC (4a's new format)
+        "%Y-%m-%dT%H:%M:%SZ",      # second-precision UTC
+        "%Y:%m:%d %H:%M:%S.%f",    # camera local with sub-second
+        "%Y:%m:%d %H:%M:%S",       # camera local, second-precision
+    ):
         try:
             return datetime.strptime(s, fmt)
         except ValueError:
@@ -193,16 +198,45 @@ def _group_by_roll(frames: dict[str, dict]) -> dict[str, list[str]]:
     return rolls
 
 
+def _emit_set(members: list[str], evs: list[float],
+              detection_source: str) -> dict | None:
+    """Build a set record from accumulated members. Returns None if the
+    sequence isn't a valid bracket (need ≥2 frames and varying EV)."""
+    if len(members) < 2 or len(set(evs)) < 2:
+        return None
+    try:
+        hero_idx = next(k for k, ev in enumerate(evs) if ev == 0.0)
+    except StopIteration:
+        hero_idx = len(members) // 2
+    return {
+        "set_id": members[hero_idx],
+        "members": members,
+        "evs": evs,
+        "hero": members[hero_idx],
+        "detection_source": detection_source,
+    }
+
+
 def _detect_shooting_mode_sets(
     rolls: dict[str, list[str]],
     frames: dict[str, dict],
     *,
-    time_window_s: float = 5.0,
+    time_window_s: float = 8.0,
+    inter_frame_gap_s: float = 3.0,
+    ev_match_tolerance: float = 0.3,
 ) -> tuple[list[dict], set[str]]:
     """Strongest signal: camera tagged the frames as bracketed in MakerNotes.
 
     Walks consecutive frames on the same roll where ShootingMode contains
-    "Bracketing" and EV varies, within a 5-second window. Hero = EV 0.
+    "Bracketing" and EV varies. A new bracket set is started whenever:
+      - The candidate's EV equals the current set's first EV AND we've seen
+        ≥2 distinct EVs already (i.e. one bracket cycle is complete and
+        the camera is repeating it). This catches the common AEB pattern
+        of `0,-,+` repeated multiple times in a continuous burst.
+      - The gap between consecutive frames exceeds `inter_frame_gap_s`,
+        OR the total span exceeds `time_window_s` (camera was paused).
+
+    Hero = the EV-0 frame in each emitted set.
     """
     sets: list[dict] = []
     consumed: set[str] = set()
@@ -226,6 +260,7 @@ def _detect_shooting_mode_sets(
 
             members = [nid]
             evs = [anchor_ev]
+            prev_dt = anchor_dt
             j = i + 1
             while j < len(ids):
                 cand = ids[j]
@@ -238,27 +273,30 @@ def _detect_shooting_mode_sets(
                 cand_ev = _ev(cand_payload)
                 if cand_dt is None or cand_ev is None:
                     break
-                if abs((cand_dt - anchor_dt).total_seconds()) > time_window_s:
+                # Time-based break: gap between consecutive shots, or total span
+                if (cand_dt - prev_dt).total_seconds() > inter_frame_gap_s:
+                    break
+                if (cand_dt - anchor_dt).total_seconds() > time_window_s:
+                    break
+                # EV-cycle break: bracket repeats the starting EV after at
+                # least 2 distinct EVs were seen → the next cycle is starting,
+                # finish the current set here so the burst splits cleanly.
+                # Tolerance handles AWB / metering drift (Hugin uses 0.5 EV
+                # for clustering; we use 0.3 EV to preserve burst boundaries
+                # without lumping legitimately-distinct exposures together).
+                if (abs(cand_ev - anchor_ev) < ev_match_tolerance
+                        and len(set(evs)) >= 2):
                     break
                 members.append(cand)
                 evs.append(cand_ev)
+                prev_dt = cand_dt
                 j += 1
 
-            # A bracket set must have ≥2 frames AND varying EV.
-            if len(members) >= 2 and len(set(evs)) >= 2:
-                try:
-                    hero_idx = next(k for k, ev in enumerate(evs) if ev == 0.0)
-                except StopIteration:
-                    hero_idx = len(members) // 2
-                sets.append({
-                    "set_id": members[hero_idx],
-                    "members": members,
-                    "evs": evs,
-                    "hero": members[hero_idx],
-                    "detection_source": "shooting_mode",
-                })
+            rec = _emit_set(members, evs, "shooting_mode")
+            if rec is not None:
+                sets.append(rec)
                 consumed.update(members)
-                i = j
+                i = j      # next iteration starts AT j (the EV-cycle break frame)
             else:
                 i += 1
 

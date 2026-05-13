@@ -23,7 +23,7 @@ INTAKE (per-source — independent, parallelisable)
   3e    images.nasa.gov            → raw/photos/images_nasa_gov/catalog.json
   3e2   IO NHQ second-precision    → processed/io_cache/io_nhq_photos_found.jsonl
   3f    Download Flickr + NASA     → raw/photos/flickr/*, raw/photos/images_nasa_gov/*
-  3g    EOL portal metadata        → web/eol_photos.json
+  3g    EOL portal metadata        → processed/eol_photos.json
   3h    Download EOL JPEGs         → raw/photos/eol/jpeg_high/*.JPG
   3l    NEF ↔ EOL diff (diagnostic)→ stdout / optional .txt
 
@@ -49,31 +49,31 @@ chosen UTC timestamp + provenance, and bracket-set membership. See
 
 ## Intake scripts
 
-|       | Script                             | Pulls                    | Writes                                                    |
-| ----- | ---------------------------------- | ------------------------ | --------------------------------------------------------- |
-| `3a`  | `3a_ia_stills_download.py`         | Internet Archive item    | `raw/photos/ia_stills/*.jpg`                              |
-| `3a2` | `3a2_io_photo_catalog.py`          | IO API (photo asset_type)| `io_cache/io_photo_catalog.jsonl`                         |
-| `3a3` | `3a3_io_exif_scrape.py`            | IO HTML (slow, per-page) | `io_cache/photo-{time,datetime}-overrides.json`           |
-| `3b`  | `3b_flickr_albums.py`              | Flickr API               | `raw/photos/flickr/album_metadata.json`                   |
-| `3e`  | `3e_images_nasa_gov.py`            | images.nasa.gov API      | `raw/photos/images_nasa_gov/catalog.json`                 |
-| `3e2` | `3e2_io_nhq_lookup.py`             | IO API (per-NHQ)         | `io_cache/io_nhq_photos_{found,notfound}.jsonl`           |
-| `3f`  | `3f_download_photos.py`            | Flickr `url_o`, NASA `~orig`| `raw/photos/flickr/*`, `raw/photos/images_nasa_gov/*`  |
-| `3g`  | `3g_eol_json.py`                   | EOL Photos DB API        | `web/eol_photos.json`                                     |
-| `3h`  | `3h_download_eol_photos.py`        | EOL DatabaseImages       | `raw/photos/eol/jpeg_high/*.JPG`                          |
-| `3l`  | `3l_flight_nef.py`                 | (diagnostic — diffs disk)| stdout report; optional `--output` text file              |
+|       | Script                      | Pulls                        | Writes                                                |
+| ----- | --------------------------- | ---------------------------- | ----------------------------------------------------- |
+| `3a`  | `3a_ia_stills_download.py`  | Internet Archive item        | `raw/photos/ia_stills/*.jpg`                          |
+| `3a2` | `3a2_io_photo_catalog.py`   | IO API (photo asset_type)    | `io_cache/io_photo_catalog.jsonl`                     |
+| `3a3` | `3a3_io_exif_scrape.py`     | IO HTML (slow, per-page)     | `io_cache/photo-{time,datetime}-overrides.json`       |
+| `3b`  | `3b_flickr_albums.py`       | Flickr API                   | `raw/photos/flickr/album_metadata.json`               |
+| `3e`  | `3e_images_nasa_gov.py`     | images.nasa.gov API          | `raw/photos/images_nasa_gov/catalog.json`             |
+| `3e2` | `3e2_io_nhq_lookup.py`      | IO API (per-NHQ)             | `io_cache/io_nhq_photos_{found,notfound}.jsonl`       |
+| `3f`  | `3f_download_photos.py`     | Flickr `url_o`, NASA `~orig` | `raw/photos/flickr/*`, `raw/photos/images_nasa_gov/*` |
+| `3g`  | `3g_eol_json.py`            | EOL Photos DB API            | `processed/eol_photos.json`                           |
+| `3h`  | `3h_download_eol_photos.py` | EOL DatabaseImages           | `raw/photos/eol/jpeg_high/*.JPG`                      |
+| `3l`  | `3l_flight_nef.py`          | (diagnostic — diffs disk)    | stdout report; optional `--output` text file          |
 
 All intake scripts are **idempotent** — re-running picks up new assets
 without redoing existing work.
 
 ## Build scripts
 
-|       | Script                          | Inputs                                     | Output                                            |
-| ----- | ------------------------------- | ------------------------------------------ | ------------------------------------------------- |
-| `4a`  | `4a_extract_all_exif.py`        | every local copy across all sources        | `processed/exif/{source}/{nasa_id}.json`          |
-| `4b`  | `4b_detect_brackets.py`         | `processed/exif/**`                        | `io_cache/bracket_sets.jsonl`                     |
-| `4c`  | `4c_build_ledger.py`            | every intake output + 4a + 4b              | `processed/photos_ledger.jsonl`                   |
-| `4d`  | `4d_generate_tiers.py`          | the ledger + on-disk raws                  | `web/photos/{thumb,lowres,hires}/{nasa_id}.jpg`   |
-| `4e`  | `4e_web_photos_json.py`         | the ledger                                 | `web/photos.json`                                 |
+|      | Script                   | Inputs                              | Output                                          |
+| ---- | ------------------------ | ----------------------------------- | ----------------------------------------------- |
+| `4a` | `4a_extract_all_exif.py` | every local copy across all sources | `processed/exif/{source}/{nasa_id}.json`        |
+| `4b` | `4b_detect_brackets.py`  | `processed/exif/**`                 | `io_cache/bracket_sets.jsonl`                   |
+| `4c` | `4c_build_ledger.py`     | every intake output + 4a + 4b       | `processed/photos_ledger.jsonl`                 |
+| `4d` | `4d_generate_tiers.py`   | the ledger + on-disk raws           | `web/photos/{thumb,lowres,hires}/{nasa_id}.jpg` |
+| `4e` | `4e_web_photos_json.py`  | the ledger                          | `web/photos.json`                               |
 
 `4a` and `4d` are CPU-bound — both use a `ThreadPoolExecutor` with a small
 worker count (4 by default) so the NEF decode doesn't thrash the disk.
@@ -104,19 +104,19 @@ nothing has changed (each step skips up-to-date work).
 
 ### Required env vars
 
-| Var                    | Used by    | Notes                                                 |
-| ---------------------- | ---------- | ----------------------------------------------------- |
-| `FLICKR_API_KEY`       | `3b`       |                                                       |
-| `IO_KEY`               | IO steps   | `3a2`, `3a3`, `3e2`                                  |
-| `NASA_EOL_API_KEY`     | `3g`       |                                                       |
-| `CREW_RAW_SOURCE_DIR`  | `3l`, `4a` | Fallback for crew raws while migrating to F: tree     |
+| Var                   | Used by    | Notes                                             |
+| --------------------- | ---------- | ------------------------------------------------- |
+| `FLICKR_API_KEY`      | `3b`       |                                                   |
+| `IO_KEY`              | IO steps   | `3a2`, `3a3`, `3e2`                               |
+| `NASA_EOL_API_KEY`    | `3g`       |                                                   |
+| `CREW_RAW_SOURCE_DIR` | `3l`, `4a` | Fallback for crew raws while migrating to F: tree |
 
 ### Required tools
 
-| Tool       | Used by | Notes                                                                |
-| ---------- | ------- | -------------------------------------------------------------------- |
+| Tool       | Used by | Notes                                                                                       |
+| ---------- | ------- | ------------------------------------------------------------------------------------------- |
 | `exiftool` | `4a`    | Reads NEF/DNG including Nikon makernote bracket tags. `winget install OliverBetz.ExifTool`. |
-| `rawpy`    | `4d`    | libraw bindings — decode NEF + DNG. Installed via `uv sync`.         |
+| `rawpy`    | `4d`    | libraw bindings — decode NEF + DNG. Installed via `uv sync`.                                |
 
 ---
 
@@ -143,13 +143,13 @@ other members.
 
 Highest priority wins:
 
-1. `exif_offset`   — DateTimeOriginal + OffsetTimeOriginal from any local copy
-2. `io_nhq`        — second-precision date from `io_nhq_photos_found.jsonl`
-3. `io_corrected`  — IO `md_creation_date` + TZ override from `photo-time-overrides.json`
-4. `io_onboard`    — onboard-camera UTC (already correct in IO for `art\d+e/a` prefixes)
-5. `flickr`        — Flickr `datetaken` (TZ-corrected if we have the photographer's offset)
-6. `nasa_images`   — `date_taken` / `date_created` from images.nasa.gov
-7. `eol`           — `dateTaken` from EOL JSON
+1. `exif_offset` — DateTimeOriginal + OffsetTimeOriginal from any local copy
+2. `io_nhq` — second-precision date from `io_nhq_photos_found.jsonl`
+3. `io_corrected` — IO `md_creation_date` + TZ override from `photo-time-overrides.json`
+4. `io_onboard` — onboard-camera UTC (already correct in IO for `art\d+e/a` prefixes)
+5. `flickr` — Flickr `datetaken` (TZ-corrected if we have the photographer's offset)
+6. `nasa_images` — `date_taken` / `date_created` from images.nasa.gov
+7. `eol` — `dateTaken` from EOL JSON
 
 Both `utc` and `utc_source` are recorded on each ledger row for traceability.
 The summary table at the end of `4c` shows the distribution.
