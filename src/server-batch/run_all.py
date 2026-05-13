@@ -41,10 +41,15 @@ STEPS = [
     ("3e", "3_photos.3e_images_nasa_gov", "Search images.nasa.gov", None),
     ("3e2", "3_photos.3e2_io_nhq_lookup", "Reverse-lookup NHQ photos in IO", None),
     ("3f", "3_photos.3f_download_photos", "Download full-res photo originals", None),
-    ("3f2", "3_photos.3f2_extract_photo_exif", "Extract EXIF datetimes from downloaded photos", None),
     ("3g_eol", "3_photos.3g_eol_json", "Fetch EOL crew photo metadata", {"artemis-ii"}),
-    ("3h", "3_photos.3h_download_eol_photos", "Download EOL large images to disk", {"artemis-ii"}),    
-    ("3k", "3_photos.3k_web_photos", "Produce web-ready photos JSON", None),
+    ("3h", "3_photos.3h_download_eol_photos", "Download EOL large images to disk", {"artemis-ii"}),
+    ("3i", "3_photos.3i_eol_rename_canonical", "Rename EOL JPEGs to canonical NASA IDs (one-shot migration)", {"artemis-ii"}),
+    # ── 4* — refactored photo pipeline (see docs/PHOTOS_EXPLAINED.md) ──
+    ("4a", "3_photos.4a_extract_all_exif", "Per-copy EXIF (raw_crew via ExifTool, JPEGs via PIL)", None),
+    ("4b", "3_photos.4b_detect_brackets",  "Detect AEB bracket sets from EXIF", None),
+    ("4c", "3_photos.4c_build_ledger",     "Build canonical per-NASA-ID photo ledger", None),
+    ("4d", "3_photos.4d_generate_tiers",   "Generate web tier JPEGs (thumb/lowres/hires)", None),
+    ("4e", "3_photos.4e_web_photos_json",  "Emit web/photos.json from the ledger", None),
 ]
 
 

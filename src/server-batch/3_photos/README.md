@@ -1,307 +1,176 @@
-# Pipeline 3: Photos (IO + IA Stills + Flickr + images.nasa.gov)
+# Pipeline 3: Photos
 
-## Data Flow
+Refactored two-stage pipeline: **intake** scripts (`3*`) pull raw assets and
+metadata from each source; **build** scripts (`4*`) merge them into a
+canonical per-NASA-ID ledger and emit the published web tiers.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│  FIVE INDEPENDENT DATA SOURCES                                                  │
-│                                                                                 │
-│  IO (Imagery Online)        IA (Archive.org)        images.nasa.gov             │
-│      │                           │                       │                      │
-│      ▼                           ▼                       ▼                      │
-│  ┌──────────────┐         ┌──────────────┐        ┌──────────────┐              │
-│  │ 3a2 — IO     │         │ 3a — IA      │        │ 3e — NASA    │              │
-│  │ Photo Catalog│         │ Stills DL    │        │ Images API   │              │
-│  │ Saves:       │         │ Saves:       │        │ Saves:       │              │
-│  │  io_photo_   │         │  raw/photos/ │        │  images_nasa │              │
-│  │  catalog     │         │  ia_stills/  │        │  _gov/       │              │
-│  │  .jsonl      │         │  *.jpg       │        │  catalog.json│              │
-│  └──────┬───────┘         └──────────────┘        └──────┬───────┘              │
-│         │                                                │                      │
-│         ▼                                                ▼                      │
-│  ┌──────────────┐                                 ┌──────────────┐              │
-│  │ 3a3 — IO     │                                 │ 3e2 — IO NHQ │              │
-│  │ EXIF Scrape  │                                 │ Lookup       │              │
-│  │ Reads: IO API│                                 │ Reads:       │              │
-│  │ Saves:       │                                 │  catalog.json│              │
-│  │  photo-exif  │                                 │ Saves:       │              │
-│  │  -metadata   │                                 │  io_nhq_*    │              │
-│  │  .json       │                                 │  .jsonl      │              │
-│  │  photo-time  │                                 └──────────────┘              │
-│  │  -overrides  │                                                               │
-│  │  .json       │         Flickr API                                            │
-│  └──────────────┘              │                                                │
-│                                ▼                                                │
-│                         ┌──────────────┐                                        │
-│                         │ 3b — Flickr  │                                        │
-│                         │ Albums       │                                        │
-│                         │ Saves:       │                                        │
-│                         │  album_      │                                        │
-│                         │  metadata    │                                        │
-│                         │  .json       │                                        │
-│                         └──────────────┘                                        │
-└─────────────────────────────────────────────────────────────────────────────────┘
+See [`docs/PHOTOS_EXPLAINED.md`](../docs/PHOTOS_EXPLAINED.md) for the
+problem-domain background (sources, "exported" status, bracket sets, the
+ledger schema, and the on-disk layout).
 
-  ┌──────────────────────────────────────────────────────────┐
-  │  ALL SOURCES                                             │
-  │                                                          │
-  │  3f — Download Photo Originals                          │
-  │  Saves: PHOTO_ASSETS_DIR/{mission}/nasa_orig/*.jpg       │
-  │         PHOTO_ASSETS_DIR/{mission}/flickr_orig/*.jpg     │
-  └──────────────────────┬───────────────────────────────────┘
-                         │
-                         ▼
-  ┌──────────────────────────────────────────────────────────┐
-  │  3f2 — Extract Photo EXIF Datetimes                     │
-  │  Reads: nasa_orig/ + flickr_orig/ (DateTimeOriginal +   │
-  │         OffsetTimeOriginal EXIF tags)                    │
-  │  Saves: processed/io_cache/photo-exif-datetimes.json    │
-  └──────────────────────┬───────────────────────────────────┘
-                         │
-                         ▼
-               ┌──────────────────────┐
-               │ 3g — Web Photos JSON │
-               │ Reads: ALL of above  │
-               │ Saves: web/photos.json│
-               └──────────────────────┘
-```
+---
 
-## Step Details
-
-### 3a: IA Stills Download (`3a_ia_stills_download.py`)
-
-|                |                                                             |
-| -------------- | ----------------------------------------------------------- |
-| **Source**     | Archive.org item (e.g. `Artemis-I-Still-Imagery`, 62 JPEGs) |
-| **Output**     | `raw/photos/ia_stills/*.jpg`                                |
-| **Idempotent** | Yes — skips existing files                                  |
-| **Artemis I**  | 62 JPEGs from `Artemis-I-Still-Imagery`                     |
-| **Artemis II** | No stills collection configured (skipped)                   |
-
-Downloads JPEG originals from an IA item. Tries the item as a direct download first, falls back to treating it as a collection of items.
-
-### 3a2: IO Photo Catalog (`3a2_io_photo_catalog.py`)
-
-|                |                                                    |
-| -------------- | -------------------------------------------------- |
-| **Source**     | IO API — bulk collection scrape                    |
-| **Output**     | `processed/io_cache/io_photo_catalog.jsonl`        |
-| **Idempotent** | Overwrites output each run                         |
-| **Artemis II** | ~23,959 photos across 7 flight collections         |
-| **Artemis I**  | Requires `io_parent_cid` (configured as `2355140`) |
-
-Fetches all photo docs from IO flight collections under the parent CID using `cols=` and `as=1` (photo asset type). This is the **authoritative catalog** — IO has every NASA flight photo with precise timestamps.
-
-### 3a3: IO EXIF Scrape (`3a3_io_exif_scrape.py`)
-
-|                          |                                                                                               |
-| ------------------------ | --------------------------------------------------------------------------------------------- |
-| **Source**               | IO API (date-range query) + IO info pages (HTML scrape)                                       |
-| **Input**                | IO API (independent — does its own date-range query, not io_photo_catalog)                    |
-| **Output**               | `processed/io_cache/photo-exif-metadata.json`, `processed/io_cache/photo-time-overrides.json` |
-| **Idempotent**           | Yes — resume support via existing metadata file                                               |
-| **⚠️ Not in run_all.py** | Must be run manually                                                                          |
-
-Solves the timezone problem: IO stores camera local time as UTC in `md_creation_date`. Ground photographer cameras (JSC, NHQ) are in CDT/EDT, so timestamps are wrong by 4–6 hours. This script:
-
-1. Fetches mission-day ground photos from IO (its own date-range query, independent of 3a2)
-2. Filters to `jsc*` and `nhq*` prefixed photos (onboard `art002e/a` cameras are already UTC)
-3. Scrapes each photo's IO info page for EXIF metadata (DigitalCreationTime with timezone)
-4. Builds a timezone correction map using three priority levels:
-   - EXIF tz_offset from scraped page
-   - Camera serial → known timezone mapping
-   - Prefix default (jsc → CDT, nhq → EDT)
-
-**This is slow** — scrapes individual HTML pages sequentially (with CONCURRENCY=10 batch size but no async HTTP).
-
-### 3b: Flickr Albums (`3b_flickr_albums.py`)
-
-|                      |                                                        |
-| -------------------- | ------------------------------------------------------ |
-| **Source**           | Flickr API                                             |
-| **Output**           | `raw/photos/flickr/album_metadata.json`                |
-| **Idempotent**       | Yes — skips if output file exists (delete to re-fetch) |
-| **API key required** | `FLICKR_API_KEY`                                       |
-
-Fetches all photos in a known Flickr album (album ID from config). Returns full photo metadata including URLs at all sizes, dates, tags, description, etc.
-
-### 3e: images.nasa.gov (`3e_images_nasa_gov.py`)
-
-|                |                                                    |
-| -------------- | -------------------------------------------------- |
-| **Source**     | NASA Image and Video Library API (public, no auth) |
-| **Output**     | `raw/photos/images_nasa_gov/catalog.json`          |
-| **Idempotent** | Overwrites output each run                         |
-
-Searches `images-api.nasa.gov` for mission-related photos. Paginates through all results. Extracts NASA IDs, titles, dates, keywords, and thumbnail URLs.
-
-### 3e2: IO NHQ Lookup (`3e2_io_nhq_lookup.py`)
-
-|                          |                                                                                |
-| ------------------------ | ------------------------------------------------------------------------------ |
-| **Input**                | `raw/photos/images_nasa_gov/catalog.json` (from 3e)                            |
-| **Output**               | `processed/io_cache/io_nhq_photos_found.jsonl`, `io_nhq_photos_notfound.jsonl` |
-| **Idempotent**           | Yes — skips already-processed NASA IDs                                         |
-| **⚠️ Not in run_all.py** | Must be run manually                                                           |
-
-images.nasa.gov only stores day-precision dates for NHQ (NASA HQ) photos. This script looks up each NHQ photo in IO to get second-precision `md_creation_date`. Only processes photos with `NHQ` prefix.
-
-### 3f: Download Photo Originals (`3f_download_photos.py`)
-
-|                |                                                                                                  |
-| -------------- | ------------------------------------------------------------------------------------------------ |
-| **Input**      | `raw/photos/flickr/album_metadata.json` (3b), `raw/photos/images_nasa_gov/catalog.json` (3e)     |
-| **Output**     | `PHOTO_ASSETS_DIR/{mission}/flickr_orig/*.{ext}`, `PHOTO_ASSETS_DIR/{mission}/nasa_orig/*.{ext}` |
-| **Idempotent** | Yes — skips files already on disk                                                                |
-
-Downloads full-resolution originals from Flickr (`url_o`) and images.nasa.gov (`~orig` asset).
-
-### 3f2: Extract Photo EXIF Datetimes (`3f2_extract_photo_exif.py`)
-
-|                |                                                                   |
-| -------------- | ----------------------------------------------------------------- |
-| **Input**      | `PHOTO_ASSETS_DIR/{mission}/nasa_orig/`, `flickr_orig/` (from 3f) |
-| **Validation** | `processed/io_cache/io_photo_catalog.jsonl` (from 3a2)            |
-| **Output**     | `processed/io_cache/photo-exif-datetimes.json`                    |
-| **Idempotent** | Overwrites output each run                                        |
-
-Reads `DateTimeOriginal` and `OffsetTimeOriginal` EXIF tags from every downloaded photo, converts to true UTC, and writes the result as `{ nasa_id: "YYYY-MM-DDTHH:MM:SSZ" }`. Only photos that have an offset tag are written — photos without an offset fall back to the existing `photo-time-overrides.json` TZ-correction logic.
-
-**Validates against IO catalog:** confirms that IO stores ground-photographer local time verbatim as UTC. For Artemis II, 796/835 overlapping photos (95%) show this discrepancy — e.g. a photo taken at `21:21:15 -05:00` local appears as `21:21:15Z` in IO instead of the correct `02:21:15Z`.
-
-### 3g: Web Photos JSON (`3g_web_photos.py`)
-
-|                |                            |
-| -------------- | -------------------------- |
-| **Input**      | ALL of the above outputs   |
-| **Output**     | `web/photos.json`          |
-| **Idempotent** | Overwrites output each run |
-
-Merges all data sources with deduplication by nasa_id. Date priority (highest wins):
-
-1. **IO photo catalog** (from 3a2) — authoritative base; `md_creation_date` is local time stored as UTC for ground photographers
-2. **IA stills** (from 3a) — only adds photos not already in IO
-3. **images.nasa.gov** (from 3e) — adds public URLs, creates entries for photos not in IO
-4. **IO NHQ date enrichment** (from 3e2) — replaces day-precision dates with second-precision
-5. **Flickr** (from 3b) — tries to match by NASA ID in title, otherwise adds as flickr-only entries
-6. **Timezone corrections** (from 3a3) — applies tz offset to correct ground photographer timestamps from IO
-7. **EXIF UTC datetimes** (from 3f2) — highest priority; true UTC from `DateTimeOriginal + OffsetTimeOriginal` in the actual downloaded file; overrides everything above
-
-## Dependency Graph
+## Data flow
 
 ```
-3a  ──────────────────────────────────────────────────────▶ 3g
-3a2 ──────────────────────────────────────────────────────▶ 3g
-3a3 ──────────────────────────────────────────────────────▶ 3g
-3b  ─────────────┬────────────────────────────────────────▶ 3g
-                 └──▶ 3f ──▶ 3f2 ──────────────────────▶ 3g
-3e  ─────────────┬────────────────────────────────────────▶ 3g
-                 ├──▶ 3e2 ─────────────────────────────▶ 3g
-                 └──▶ 3f ──▶ 3f2 ──────────────────────▶ 3g
+INTAKE (per-source — independent, parallelisable)
+─────────────────────────────────────────────────
+  3a    IA stills                  → raw/photos/ia_stills/*.jpg
+  3a2   IO photo catalog           → processed/io_cache/io_photo_catalog.jsonl
+  3a3   IO EXIF / TZ corrections   → processed/io_cache/photo-time-overrides.json
+                                     processed/io_cache/photo-datetime-overrides.json
+  3b    Flickr albums              → raw/photos/flickr/album_metadata.json
+  3e    images.nasa.gov            → raw/photos/images_nasa_gov/catalog.json
+  3e2   IO NHQ second-precision    → processed/io_cache/io_nhq_photos_found.jsonl
+  3f    Download Flickr + NASA     → raw/photos/flickr/*, raw/photos/images_nasa_gov/*
+  3g    EOL portal metadata        → web/eol_photos.json
+  3h    Download EOL JPEGs         → raw/photos/eol/jpeg_high/*.JPG
+  3l    NEF ↔ EOL diff (diagnostic)→ stdout / optional .txt
+
+  (manual)  Crew NEF + DNG drop    → raw/photos/5_Crew-Captured-Imagery/**
+
+BUILD (depends on intake — sequential)
+─────────────────────────────────────────────────
+  4a    Per-copy EXIF              → processed/exif/{source}/{nasa_id}.json
+                                     • raw_crew via ExifTool (NEF + DNG, full tags)
+                                     • JPEG sources via PIL
+  4b    Detect AEB bracket sets    → processed/io_cache/bracket_sets.jsonl
+  4c    Build canonical ledger     → processed/photos_ledger.jsonl
+  4d    Generate web tiers         → web/photos/{thumb,lowres,hires}/{nasa_id}.jpg
+  4e    Emit web/photos.json       → web/photos.json
 ```
 
-**3a, 3a2, 3a3, 3b, 3e** can all run in parallel — they have no interdependencies.
+The **ledger** (`processed/photos_ledger.jsonl`) is the single source of
+truth — one record per NASA ID with full per-copy EXIF, export status, the
+chosen UTC timestamp + provenance, and bracket-set membership. See
+[`shared/photos_ledger.py`](../shared/photos_ledger.py) for the dataclasses.
 
-**3e2 depends on 3e** (needs the images.nasa.gov catalog to know which NHQ IDs to look up).
+---
 
-**3f depends on 3b and 3e** (needs their catalogs to know what to download).
+## Intake scripts
 
-**3f2 depends on 3f** (reads the downloaded files).
+|       | Script                             | Pulls                    | Writes                                                    |
+| ----- | ---------------------------------- | ------------------------ | --------------------------------------------------------- |
+| `3a`  | `3a_ia_stills_download.py`         | Internet Archive item    | `raw/photos/ia_stills/*.jpg`                              |
+| `3a2` | `3a2_io_photo_catalog.py`          | IO API (photo asset_type)| `io_cache/io_photo_catalog.jsonl`                         |
+| `3a3` | `3a3_io_exif_scrape.py`            | IO HTML (slow, per-page) | `io_cache/photo-{time,datetime}-overrides.json`           |
+| `3b`  | `3b_flickr_albums.py`              | Flickr API               | `raw/photos/flickr/album_metadata.json`                   |
+| `3e`  | `3e_images_nasa_gov.py`            | images.nasa.gov API      | `raw/photos/images_nasa_gov/catalog.json`                 |
+| `3e2` | `3e2_io_nhq_lookup.py`             | IO API (per-NHQ)         | `io_cache/io_nhq_photos_{found,notfound}.jsonl`           |
+| `3f`  | `3f_download_photos.py`            | Flickr `url_o`, NASA `~orig`| `raw/photos/flickr/*`, `raw/photos/images_nasa_gov/*`  |
+| `3g`  | `3g_eol_json.py`                   | EOL Photos DB API        | `web/eol_photos.json`                                     |
+| `3h`  | `3h_download_eol_photos.py`        | EOL DatabaseImages       | `raw/photos/eol/jpeg_high/*.JPG`                          |
+| `3l`  | `3l_flight_nef.py`                 | (diagnostic — diffs disk)| stdout report; optional `--output` text file              |
 
-**3g depends on all of them** — it's the final merge step.
+All intake scripts are **idempotent** — re-running picks up new assets
+without redoing existing work.
 
-### Minimum execution order:
+## Build scripts
 
-```
-Parallel: 3a, 3a2, 3a3, 3b, 3e
-Then:     3e2 (after 3e), 3f (after 3b + 3e)
-Then:     3f2 (after 3f)
-Finally:  3g  (after everything)
-```
+|       | Script                          | Inputs                                     | Output                                            |
+| ----- | ------------------------------- | ------------------------------------------ | ------------------------------------------------- |
+| `4a`  | `4a_extract_all_exif.py`        | every local copy across all sources        | `processed/exif/{source}/{nasa_id}.json`          |
+| `4b`  | `4b_detect_brackets.py`         | `processed/exif/**`                        | `io_cache/bracket_sets.jsonl`                     |
+| `4c`  | `4c_build_ledger.py`            | every intake output + 4a + 4b              | `processed/photos_ledger.jsonl`                   |
+| `4d`  | `4d_generate_tiers.py`          | the ledger + on-disk raws                  | `web/photos/{thumb,lowres,hires}/{nasa_id}.jpg`   |
+| `4e`  | `4e_web_photos_json.py`         | the ledger                                 | `web/photos.json`                                 |
 
-## Assets Saved
+`4a` and `4d` are CPU-bound — both use a `ThreadPoolExecutor` with a small
+worker count (4 by default) so the NEF decode doesn't thrash the disk.
 
-| File                                               | Produced by | Consumed by        | Re-run cost                            |
-| -------------------------------------------------- | ----------- | ------------------ | -------------------------------------- |
-| `raw/photos/ia_stills/*.jpg`                       | 3a          | 3g                 | Medium (downloads)                     |
-| `processed/io_cache/io_photo_catalog.jsonl`        | 3a2         | 3g, 3f2 (validate) | Medium (IO API, 24K+ docs)             |
-| `processed/io_cache/io_photo_exif.jsonl`           | 3a3         | 3a3 (cache)        | **High** (scrapes 1000s of HTML pages) |
-| `processed/io_cache/photo-time-overrides.json`     | 3a3         | 3g                 | Derived from above                     |
-| `processed/io_cache/photo-datetime-overrides.json` | 3a3         | 3g                 | Onboard camera absolute datetimes      |
-| `raw/photos/flickr/album_metadata.json`            | 3b          | 3f, 3g             | Low (single API call)                  |
-| `raw/photos/images_nasa_gov/catalog.json`          | 3e          | 3e2, 3f, 3g        | Low (public API)                       |
-| `processed/io_cache/io_nhq_photos_found.jsonl`     | 3e2         | 3g                 | Medium (per-item IO API)               |
-| `processed/io_cache/io_nhq_photos_notfound.jsonl`  | 3e2         | (reference)        | Medium                                 |
-| `PHOTO_ASSETS_DIR/{mission}/nasa_orig/`            | 3f          | 3f2                | High (large file downloads)            |
-| `PHOTO_ASSETS_DIR/{mission}/flickr_orig/`          | 3f          | 3f2                | High (large file downloads)            |
-| `processed/io_cache/photo-exif-datetimes.json`     | 3f2         | 3g                 | Fast (reads local files)               |
-| `web/photos.json`                                  | 3g          | (frontend)         | Instant                                |
+---
 
-## Issues Found
+## How to run
 
-### 1. ✅ Steps 3a3 and 3e2 are registered in `run_all.py`
-
-Both scripts are included in the STEPS list in `run_all.py` and run as part of the normal pipeline. Note that 3a3 is slow (scrapes HTML pages) and 3e2 depends on 3e.
-
-### 2. ⚠️ 3a3 does its own IO query independent of 3a2
-
-Step 3a3 fetches mission-day photos from IO using a date-range query with `ARTEMIS_MISSIONS_CID = "2346894"` (hardcoded), while 3a2 uses the mission config's `io_parent_cid` (`2380537` for Artemis II). These are **different collection CIDs**, so they may return different photo sets. If 3a3 used the same catalog as 3a2, we could avoid a redundant IO API call and ensure consistency.
-
-### 3. ⚠️ Flickr dates are discarded
-
-The Flickr API returns `datetaken` and `dateupload` fields (they're included via `PHOTO_EXTRAS` in `flickr_api.py`), but `3f_web_photos.py` creates Flickr entries with `"date": ""`. This means Flickr-only photos (not matched to IO by NASA ID) have no timeline placement. Fix:
-
-```python
-photos[entry_id] = {
-    ...
-    "date": photo.get("datetaken", ""),  # Use Flickr's date
-    ...
-}
-```
-
-### 4. ⚠️ Flickr NASA ID extraction is limited
-
-The regex in 3f only looks for `art\d+[me]\d+` and `jsc\d+[me]\d+` in Flickr photo titles. But many Flickr photos have NASA IDs in their description, tags, or in formats like `NHQ202604010001`. The NHQ prefix photos are never matched, so they end up as duplicate entries (`flickr_{id}` alongside `nhq...` from images.nasa.gov).
-
-### 5. Minor: No `3c` (Flickr photo details) or `3d` (Flickr classification)
-
-## How to Run
-
-Run from `src/server-batch/`:
+From `src/server-batch/` with the project venv activated:
 
 ```bash
-# Run all registered steps in order (works for both missions)
-python run_all.py --mission artemis-i
-python run_all.py --mission artemis-ii
+# Full pipeline for a mission
+uv run run_all.py --mission artemis-ii
 
-# Run individual steps via run_all.py
-python run_all.py --mission artemis-ii --step 3a
-python run_all.py --mission artemis-ii --step 3a2
-python run_all.py --mission artemis-ii --step 3a3   # slow: scrapes HTML pages
-python run_all.py --mission artemis-ii --step 3b
-python run_all.py --mission artemis-ii --step 3e
-python run_all.py --mission artemis-ii --step 3e2   # run after 3e
-python run_all.py --mission artemis-ii --step 3f    # download originals (after 3b + 3e)
-python run_all.py --mission artemis-ii --step 3f2   # extract EXIF datetimes (after 3f)
-
-# Then run 3g to merge everything
-python run_all.py --mission artemis-ii --step 3g
-
-# Same commands with artemis-i
-python run_all.py --mission artemis-i --step 3a2
-# ... etc
+# Individual steps
+uv run run_all.py --mission artemis-ii --step 3a 3a2 3b 3e
+uv run run_all.py --mission artemis-ii --step 3g 3h        # EOL — Artemis II only
+uv run run_all.py --mission artemis-ii --step 4a           # per-copy EXIF
+uv run run_all.py --mission artemis-ii --step 4b           # bracket detection
+uv run run_all.py --mission artemis-ii --step 4c           # build ledger
+uv run run_all.py --mission artemis-ii --step 4d           # web tier JPEGs
+uv run run_all.py --mission artemis-ii --step 4e           # web/photos.json
 ```
 
-**Required env vars:** `FLICKR_API_KEY` (for step 3b), `IO_KEY` (for IO API steps).
+After the intake scripts run once, you can re-run just `4a 4b 4c 4d 4e` to
+rebuild the ledger and republish — typically completes in seconds when
+nothing has changed (each step skips up-to-date work).
 
-The PLANNING doc describes these steps but they don't exist as scripts. Currently 3b fetches album metadata with all photo extras in a single call, which may be sufficient. The AI classification step (3d) is also absent — all Flickr photos are included unclassified.
+### Required env vars
 
-## Missing Steps from Planning Doc
+| Var                    | Used by    | Notes                                                 |
+| ---------------------- | ---------- | ----------------------------------------------------- |
+| `FLICKR_API_KEY`       | `3b`       |                                                       |
+| `IO_KEY`               | IO steps   | `3a2`, `3a3`, `3e2`                                  |
+| `NASA_EOL_API_KEY`     | `3g`       |                                                       |
+| `CREW_RAW_SOURCE_DIR`  | `3l`, `4a` | Fallback for crew raws while migrating to F: tree     |
 
-| Planned Step                  | Status                       | Impact                                 |
-| ----------------------------- | ---------------------------- | -------------------------------------- |
-| 3c — Flickr photo details     | Not implemented              | Not needed — 3b fetches extras inline  |
-| 3d — Flickr AI classification | Not implemented              | All Flickr photos included unfiltered  |
-| 3e2 — IO NHQ lookup           | Implemented, in `run_all.py` | Run after step 3e                      |
-| 3a3 — IO EXIF scrape          | Implemented, in `run_all.py` | Slow — scrapes HTML pages              |
-| 3f2 — EXIF datetime extract   | Implemented, in `run_all.py` | Run after step 3f (download originals) |
+### Required tools
+
+| Tool       | Used by | Notes                                                                |
+| ---------- | ------- | -------------------------------------------------------------------- |
+| `exiftool` | `4a`    | Reads NEF/DNG including Nikon makernote bracket tags. `winget install OliverBetz.ExifTool`. |
+| `rawpy`    | `4d`    | libraw bindings — decode NEF + DNG. Installed via `uv sync`.         |
+
+---
+
+## Bracket-set detection (4b)
+
+The crew shot AEB sets (typically 3 frames per scene). Detection cascades
+in priority order:
+
+1. **`MakerNotes:ShootingMode` contains "Bracketing"** — strongest signal
+   (Nikon D5/D6). Group consecutive frames on the same roll within 5 s
+   where EV varies. Hero = the EV-zero frame.
+2. **`BracketShotNumber` / `BracketShootCount`** — older Canon-style cameras
+   tag every frame with "2 of 3"; walk forward from "1 of N".
+3. **EV-only heuristic** — fallback for JPEG re-encodes that lost
+   makernotes; require ≥3 consecutive frames on the same roll within 5 s
+   with varying EV and stable focal length.
+
+In the ledger every member of a set carries the same `bracket.set_id` (the
+NASA ID of the metered/0-EV frame). The web JSON (`4e`) collapses each set
+to one top-level entry — the hero — with `bracket.alternates` listing the
+other members.
+
+## Date-priority chain (4c)
+
+Highest priority wins:
+
+1. `exif_offset`   — DateTimeOriginal + OffsetTimeOriginal from any local copy
+2. `io_nhq`        — second-precision date from `io_nhq_photos_found.jsonl`
+3. `io_corrected`  — IO `md_creation_date` + TZ override from `photo-time-overrides.json`
+4. `io_onboard`    — onboard-camera UTC (already correct in IO for `art\d+e/a` prefixes)
+5. `flickr`        — Flickr `datetaken` (TZ-corrected if we have the photographer's offset)
+6. `nasa_images`   — `date_taken` / `date_created` from images.nasa.gov
+7. `eol`           — `dateTaken` from EOL JSON
+
+Both `utc` and `utc_source` are recorded on each ledger row for traceability.
+The summary table at the end of `4c` shows the distribution.
+
+---
+
+## Diagnostic / one-off scripts
+
+- **`3l_flight_nef.py`** — compares EOL exports against local crew raws.
+  Prints what's exported but missing a raw, and what we have a raw for but
+  isn't yet exported. Useful for tracking which crew raws are queued to
+  light up on the next EOL release pass.
+
+---
+
+## See also
+
+- [`docs/PHOTOS_EXPLAINED.md`](../docs/PHOTOS_EXPLAINED.md) — problem domain,
+  source taxonomy, ledger schema, decisions
+- [`docs/IO_DATA_EXPLAINED.md`](../docs/IO_DATA_EXPLAINED.md) — IO catalog
+  details, collection hierarchy
+- [`docs/PLANNING_DATA_INGESTION.md`](../docs/PLANNING_DATA_INGESTION.md) —
+  whole-project ingestion plan (photos section is now superseded by this
+  README + PHOTOS_EXPLAINED.md)

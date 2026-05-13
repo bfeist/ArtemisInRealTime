@@ -56,7 +56,7 @@ def download_stills(mission: MissionConfig) -> None:
 
         for i, jpeg in enumerate(jpegs, 1):
             url = f"{IA_DOWNLOAD_URL}/{ident}/{jpeg['name']}"
-            dest = mission.raw_photos_ia / jpeg["name"]
+            dest = mission.photos_ia_stills / jpeg["name"]
 
             if dest.exists():
                 skipped += 1
@@ -94,7 +94,7 @@ def download_stills(mission: MissionConfig) -> None:
 
         for jpeg in jpegs:
             url = f"{IA_DOWNLOAD_URL}/{item_ident}/{jpeg['name']}"
-            dest = mission.raw_photos_ia / jpeg["name"]
+            dest = mission.photos_ia_stills / jpeg["name"]
 
             if dest.exists():
                 skipped += 1

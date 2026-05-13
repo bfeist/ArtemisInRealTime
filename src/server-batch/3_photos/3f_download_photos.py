@@ -5,8 +5,8 @@ Sources:
   2. images.nasa.gov — reads catalog.json (from step 3e), resolves ~orig asset.
 
 Produces:
-  {data_dir}/{mission}/photos/flickr_orig/{photo_id}.{ext}
-  {data_dir}/{mission}/photos/nasa_orig/{nasa_id}~orig.{ext}
+  {data_dir}/{mission}/raw/photos/flickr/{photo_id}.{ext}
+  {data_dir}/{mission}/raw/photos/nasa_images/{nasa_id}~orig.{ext}
 """
 
 import argparse

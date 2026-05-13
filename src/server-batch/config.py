@@ -21,8 +21,21 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 # ── Directories ───────────────────────────────────────────────────────────────
 DATA_DIR = Path(os.environ.get("DATA_DIR", REPO_ROOT.parent / "ArtemisInRealTime_assets"))
 YT_VIDEO_DIR = Path(os.environ.get("YT_VIDEO_DIR", "H:/ArtemisInRealTime_yt_videos"))
-PHOTO_ASSETS_DIR = Path(os.environ.get("PHOTO_ASSETS_DIR", "D:/ArtemisInRealTime_assets/photos"))
 VIDEO_ASSETS_DIR = Path(os.environ.get("VIDEO_ASSETS_DIR", "D:/ArtemisInRealTime_assets/videos"))
+
+# Crew raw imagery (NEF + DNG) lives outside the per-mission tree until disk
+# space is freed and they're moved into mission.photos_raw_crew. The legacy D:
+# location is the default; override with CREW_RAW_SOURCE_DIR.
+CREW_RAW_SOURCE_DIR = Path(
+    os.environ.get(
+        "CREW_RAW_SOURCE_DIR",
+        "D:/ArtemisInRealTime_assets/5_Crew-Captured-Imagery",
+    )
+)
+
+# DEPRECATED: PHOTO_ASSETS_DIR is being collapsed into mission.data_dir.
+# Kept as an alias for one cycle in case any code still imports it.
+PHOTO_ASSETS_DIR = Path(os.environ.get("PHOTO_ASSETS_DIR", DATA_DIR))
 
 # ── IO API ────────────────────────────────────────────────────────────────────
 
@@ -78,29 +91,94 @@ class MissionConfig:
     def raw_comm(self) -> Path:
         return self.data_dir / "raw" / "comm"
 
+    # ── Raw photo source dirs (all under data_dir/raw/photos/) ─────────────
+    # These are the canonical locations. The intake scripts download originals
+    # straight here; the ledger build walks them to populate copies[*].path.
+
     @property
-    def raw_photos_ia(self) -> Path:
+    def photos_raw_crew(self) -> Path:
+        """Crew-captured raws — NEF (Nikon SLRs) and DNG (iPhone/other).
+        Walked recursively (the on-disk layout has FD_01/FD_02/… subfolders)."""
+        return self.data_dir / "raw" / "photos" / "5_Crew-Captured-Imagery"
+
+    @property
+    def photos_eol(self) -> Path:
+        """Large JPEGs downloaded from the EOL portal."""
+        return self.data_dir / "raw" / "photos" / "eol" / "jpeg_high"
+
+    @property
+    def photos_ia_stills(self) -> Path:
+        """JPEGs downloaded from IA still-imagery items."""
         return self.data_dir / "raw" / "photos" / "ia_stills"
 
     @property
+    def photos_flickr_orig(self) -> Path:
+        """Originals downloaded from Flickr (url_o)."""
+        return self.data_dir / "raw" / "photos" / "flickr"
+
+    @property
+    def photos_nasa_orig(self) -> Path:
+        """Originals downloaded from images.nasa.gov (~orig)."""
+        return self.data_dir / "raw" / "photos" / "images_nasa_gov"
+
+    # ── Per-source intake metadata (raw, source-shaped) ───────────────────
+
+    @property
     def raw_photos_flickr(self) -> Path:
+        """Flickr album_metadata.json lives here."""
         return self.data_dir / "raw" / "photos" / "flickr"
 
     @property
     def raw_photos_nasa(self) -> Path:
+        """images.nasa.gov catalog.json lives here."""
         return self.data_dir / "raw" / "photos" / "images_nasa_gov"
+
+    # Legacy aliases — keep until callers are migrated.
+    @property
+    def raw_photos_ia(self) -> Path:
+        return self.photos_ia_stills
+
+    @property
+    def raw_photos_eol(self) -> Path:
+        return self.photos_eol
 
     @property
     def videos_io_dir(self) -> Path:
         return VIDEO_ASSETS_DIR / self.slug
 
-    @property
-    def photos_flickr_orig(self) -> Path:
-        return PHOTO_ASSETS_DIR / self.slug / "flickr_orig"
+    # ── Web outputs ────────────────────────────────────────────────────────
 
     @property
-    def photos_nasa_orig(self) -> Path:
-        return PHOTO_ASSETS_DIR / self.slug / "nasa_orig"
+    def web_photos_dir(self) -> Path:
+        """Parent for thumb/, lowres/, hires/ tier directories (step 4d)."""
+        return self.data_dir / "web" / "photos"
+
+    @property
+    def web_photos_thumb(self) -> Path:
+        return self.web_photos_dir / "thumb"
+
+    @property
+    def web_photos_lowres(self) -> Path:
+        return self.web_photos_dir / "lowres"
+
+    @property
+    def web_photos_hires(self) -> Path:
+        return self.web_photos_dir / "hires"
+
+    # ── Processed caches (EXIF + ledger) ──────────────────────────────────
+
+    @property
+    def exif_cache_dir(self) -> Path:
+        """Per-source EXIF JSONs under processed/exif/{source}/{nasa_id}.json."""
+        return self.data_dir / "processed" / "exif"
+
+    @property
+    def photos_ledger_path(self) -> Path:
+        return self.data_dir / "processed" / "photos_ledger.jsonl"
+
+    @property
+    def bracket_sets_path(self) -> Path:
+        return self.io_cache / "bracket_sets.jsonl"
 
     @property
     def processed_transcripts(self) -> Path:
@@ -124,9 +202,15 @@ class MissionConfig:
             self.raw_video_ia,
             self.raw_video_yt,
             self.raw_comm,
-            self.raw_photos_ia,
-            self.raw_photos_flickr,
-            self.raw_photos_nasa,
+            self.photos_raw_crew,
+            self.photos_eol,
+            self.photos_ia_stills,
+            self.photos_flickr_orig,
+            self.photos_nasa_orig,
+            self.exif_cache_dir,
+            self.web_photos_thumb,
+            self.web_photos_lowres,
+            self.web_photos_hires,
             self.processed_transcripts,
             self.io_cache,
             self.web_dir,

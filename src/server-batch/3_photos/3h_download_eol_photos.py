@@ -8,9 +8,9 @@ Source URL pattern:
   https://eol.jsc.nasa.gov/DatabaseImages/{large}
   e.g. https://eol.jsc.nasa.gov/DatabaseImages/ESC/large/ART002/ART002-E-168.JPG
 
-Output directory (from config.PHOTO_ASSETS_DIR):
-  D:/ArtemisInRealTime_assets/photos/artemis-ii/{filename}
-  e.g. D:/ArtemisInRealTime_assets/photos/artemis-ii/ART002-E-168.JPG
+Output directory (from config — mission.photos_eol):
+  {DATA_DIR}/{mission}/raw/photos/eol/{filename}
+  e.g. F:/_repos/ArtemisInRealTime_assets/artemis-ii/raw/photos/eol/ART002-E-168.JPG
 
 Usage:
   uv run python 3_photos/3h_download_eol_photos.py
@@ -38,7 +38,8 @@ from rich.progress import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import MISSIONS, PHOTO_ASSETS_DIR
+from config import MISSIONS
+from shared.eol_naming import to_canonical_filename
 
 console = Console()
 
@@ -107,7 +108,7 @@ def main():
         sys.exit(0)
 
     # Output directory
-    out_dir = PHOTO_ASSETS_DIR / mission.slug
+    out_dir = mission.photos_eol
     out_dir.mkdir(parents=True, exist_ok=True)
 
     console.print(f"[bold blue]EOL photo downloader — {mission.name}[/bold blue]")
@@ -126,7 +127,11 @@ def main():
             skipped_no_large += 1
             continue
         url = f"{EOL_BASE}/{large_path}"
-        filename = Path(large_path).name  # e.g. ART002-E-168.JPG
+        # Save with the canonical NASA ID filename (`art002e000168.jpg`) so the
+        # rest of the pipeline doesn't have to special-case the EOL form.
+        on_wire_name = Path(large_path).name             # e.g. ART002-E-168.JPG
+        canonical = to_canonical_filename(on_wire_name)  # e.g. art002e000168.jpg
+        filename = canonical or on_wire_name             # fall back if regex misses
         dest = out_dir / filename
         if dest.exists():
             already_done += 1

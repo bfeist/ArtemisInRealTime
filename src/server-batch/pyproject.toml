@@ -12,7 +12,9 @@ dependencies = [
     "numpy",
     "Pillow",
     "pydub",
+    "pyexiftool",      # ExifTool subprocess wrapper — reads NEF/DNG makernotes (step 4a)
     "python-dateutil",
+    "rawpy",           # libraw bindings — decode NEF + DNG for tier generation (step 4d)
     "python-dotenv",
     "requests",
     "rich",

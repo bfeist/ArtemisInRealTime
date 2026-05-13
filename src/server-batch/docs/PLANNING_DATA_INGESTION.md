@@ -43,16 +43,24 @@ src/
 │   ├── [planned] 2c2_io_video_catalog.py # Scrape IO flight video collections
 │   └── [planned] 2_transcribe.py         # WhisperX transcription of YouTube video audio
 │
-├── 3_photos/                  # IA still imagery + Flickr + images.nasa.gov
+├── 3_photos/                  # See 3_photos/README.md and docs/PHOTOS_EXPLAINED.md
+│   │                          # for the canonical photo pipeline shape (refactored).
+│   │                          # Two stages: 3* intake → 4* build (ledger + tiers).
 │   ├── 3a_ia_stills_download.py     # Download still imagery from IA collections
 │   ├── 3a2_io_photo_catalog.py      # Scrape IO flight photo collections
 │   ├── 3a3_io_exif_scrape.py        # Scrape EXIF for ground camera timezone corrections
 │   ├── 3b_flickr_albums.py          # Discover & fetch Flickr album metadata
 │   ├── 3e_images_nasa_gov.py        # Scrape images.nasa.gov for Artemis photos
 │   ├── 3e2_io_nhq_lookup.py         # Reverse-lookup NHQ photos in IO for precise timestamps
-│   ├── 3f_web_photos.py             # Produce web-ready JSON
-│   ├── [planned] 3c_flickr_photos.py     # Fetch per-photo metadata + URLs
-│   └── [planned] 3d_flickr_classify.py   # AI classification: flight vs preflight/portrait/etc.
+│   ├── 3f_download_photos.py        # Download Flickr + images.nasa.gov originals
+│   ├── 3g_eol_json.py               # Fetch EOL crew photo metadata (Artemis II)
+│   ├── 3h_download_eol_photos.py    # Download EOL large JPEGs to disk
+│   ├── 3l_flight_nef.py             # Diagnostic: diff EOL exports against local crew raws
+│   ├── 4a_extract_all_exif.py       # Per-copy EXIF (raw_crew via ExifTool, JPEGs via PIL)
+│   ├── 4b_detect_brackets.py        # Detect AEB bracket sets from EXIF
+│   ├── 4c_build_ledger.py           # Build canonical per-NASA-ID photo ledger
+│   ├── 4d_generate_tiers.py         # Generate web tier JPEGs (thumb/lowres/hires)
+│   └── 4e_web_photos_json.py        # Emit web/photos.json from the ledger
 │
 └── shared/                    # Shared utilities
     ├── io_api.py                     # Imagery Online API client
@@ -68,58 +76,50 @@ Assets live outside the repo in a sibling directory (`../ArtemisInRealTime_asset
 ```
 ../ArtemisInRealTime_assets/
 ├── artemis-i/
-│   ├── raw/
-│   │   ├── video/
-│   │   │   ├── ia/                # IA video downloads (91 items)
-│   │   │   └── yt/                # YouTube livestream downloads
-│   │   └── photos/
-│   │       ├── ia_stills/         # Artemis-I-Still-Imagery (62 JPEGs)
-│   │       ├── flickr/            # Flickr metadata JSON
-│   │       │   └── album_metadata.json
-│   │       └── images_nasa_gov/   # images.nasa.gov metadata
-│   │           └── catalog.json
-│   ├── processed/
-│   │   ├── ia_video_catalog.json           # IA item list (step 2a)
-│   │   ├── ia_video_metadata.json          # IA video timestamps + duration (step 2f)
-│   │   └── io_cache/              # IO API response cache
-│   │       ├── io_photo_catalog.jsonl             # Full IO photo catalog (step 3a2)
-│   │       ├── io-photo-exif-metadata.json           # Ground camera EXIF data (step 3a3)
-│   │       ├── io-photo-time-overrides.json          # Ground camera TZ offsets (step 3a3)
-│   │       ├── io-photo-datetime-overrides.json      # Onboard camera datetimes (step 3a3)
-│   │       ├── io_nhq_photos_found.jsonl          # NHQ photos found in IO (step 3e2)
-│   │       └── io_nhq_photos_notfound.jsonl       # NHQ photos not in IO (step 3e2)
-│   └── web/                       # Web-ready JSON
-│       ├── videoIA.json
-│       ├── videoYt.json
-│       └── photos.json
+│   ├── raw/                       # Same shape as artemis-ii (see below).
+│   │                              # No 5_Crew-Captured-Imagery — Artemis I was uncrewed.
+│   ├── processed/                 # Same shape as artemis-ii
+│   └── web/                       # Same shape as artemis-ii (no comm.json)
 │
 ├── artemis-ii/
 │   ├── raw/
-│   │   ├── comm/                  # Downloaded audio ZIPs + extracted WAVs
+│   │   ├── comm/                       # Downloaded audio ZIPs + extracted WAVs
 │   │   ├── video/
-│   │   │   ├── ia/                # IA video downloads
-│   │   │   └── yt/                # YouTube livestream downloads
+│   │   │   ├── ia/                     # IA video downloads
+│   │   │   └── yt/                     # YouTube livestream downloads
 │   │   └── photos/
-│   │       ├── ia_stills/         # IA still imagery (when available)
-│   │       ├── flickr/            # Flickr metadata JSON
-│   │       │   └── album_metadata.json
-│   │       └── images_nasa_gov/   # images.nasa.gov metadata
-│   │           └── catalog.json
+│   │       ├── 5_Crew-Captured-Imagery/   # Crew NEF + DNG (FD_01/, FD_02/, … subfolders)
+│   │       ├── eol/jpeg_high/             # EOL large JPEGs (step 3h)
+│   │       ├── ia_stills/                 # IA still imagery (step 3a)
+│   │       ├── flickr/                    # Flickr originals + album_metadata.json (3b/3f)
+│   │       └── images_nasa_gov/           # images.nasa.gov originals + catalog.json (3e/3f)
 │   ├── processed/
-│   │   ├── ia_video_catalog.json           # IA item list (step 2a)
-│   │   ├── ia_video_metadata.json          # IA video timestamps + duration (step 2f)
-│   │   └── io_cache/              # IO API response cache
-│   │       ├── io_photo_catalog.jsonl             # Full IO photo catalog (step 3a2)
-│   │       ├── photo-exif-metadata.json           # Ground camera EXIF data (step 3a3)
-│   │       ├── photo-time-overrides.json          # Ground camera TZ offsets (step 3a3)
-│   │       ├── photo-datetime-overrides.json      # Onboard camera datetimes (step 3a3)
-│   │       ├── io_nhq_photos_found.jsonl          # NHQ photos found in IO (step 3e2)
-│   │       └── io_nhq_photos_notfound.jsonl       # NHQ photos not in IO (step 3e2)
-│   └── web/                       # Web-ready JSON
+│   │   ├── ia_video_catalog.json
+│   │   ├── ia_video_metadata.json
+│   │   ├── photos_ledger.jsonl            # Canonical per-NASA-ID merge (step 4c)
+│   │   ├── exif/                          # Per-copy EXIF (step 4a)
+│   │   │   ├── raw_crew/{nasa_id}.json
+│   │   │   ├── eol/{nasa_id}.json
+│   │   │   ├── flickr/{nasa_id}.json
+│   │   │   ├── nasa_images/{nasa_id}.json
+│   │   │   └── ia_stills/{nasa_id}.json
+│   │   └── io_cache/                      # IO API response cache
+│   │       ├── io_photo_catalog.jsonl
+│   │       ├── photo-time-overrides.json
+│   │       ├── photo-datetime-overrides.json
+│   │       ├── io_nhq_photos_found.jsonl
+│   │       ├── io_nhq_photos_notfound.jsonl
+│   │       └── bracket_sets.jsonl         # AEB sets (step 4b)
+│   └── web/                       # Web-ready outputs
 │       ├── comm.json
 │       ├── videoIA.json
 │       ├── videoYt.json
-│       └── photos.json
+│       ├── eol_photos.json                # EOL metadata (step 3g)
+│       ├── photos.json                    # Frontend photo list (step 4e)
+│       └── photos/                        # Tier JPEGs (step 4d)
+│           ├── thumb/{nasa_id}.jpg
+│           ├── lowres/{nasa_id}.jpg
+│           └── hires/{nasa_id}.jpg
 │
 └── shared/
     └── flickr_classify_cache/     # AI classification results (reusable) — planned
@@ -841,13 +841,17 @@ Scripts accept `--mission artemis-i` or `--mission artemis-ii`. The `run_all.py`
 7. 2f_transcribe.py # Transcribe YouTube video audio (GPU)
 8. 2g_web_video.py # Generate video JSON
 
-9. 3a_ia_stills_download.py # Download 62 JPEGs from Artemis-I-Still-Imagery
-10. 3a2_io_photo_catalog.py # Scrape IO flight photo collections
-11. 3b_flickr_albums.py # Discover Artemis I Flickr album(s)
-12. 3c_flickr_photos.py # Fetch photo metadata
-13. 3d_flickr_classify.py # AI classify flight vs preflight photos
-14. 3e_images_nasa_gov.py # Fetch images.nasa.gov
-15. 3f_web_photos.py # Generate photos.json
+9. 3a_ia_stills_download.py     # Download 62 JPEGs from Artemis-I-Still-Imagery
+10. 3a2_io_photo_catalog.py     # Scrape IO flight photo collections
+11. 3a3_io_exif_scrape.py       # Ground-camera TZ corrections
+12. 3b_flickr_albums.py         # Fetch Flickr album metadata
+13. 3e_images_nasa_gov.py       # Catalog images.nasa.gov
+14. 3e2_io_nhq_lookup.py        # NHQ second-precision dates
+15. 3f_download_photos.py       # Download Flickr + images.nasa.gov originals
+16. 4a_extract_all_exif.py      # Per-copy EXIF
+17. 4c_build_ledger.py          # Build canonical ledger (4b skipped — no crew raws)
+18. 4d_generate_tiers.py        # Generate web tier JPEGs
+19. 4e_web_photos_json.py       # Emit web/photos.json
 
 ```
 
@@ -869,12 +873,20 @@ Scripts accept `--mission artemis-i` or `--mission artemis-ii`. The `run_all.py`
 11. 2f2_comm_yt_sync.py # Sync comm transcripts with YouTube timelines
 12. 2g_web_video.py # Generate video JSON
 
-13. 3a2_io_photo_catalog.py # Scrape IO flight photo collections (23,000+ photos)
-14. 3b_flickr_albums.py # Discover Artemis II Flickr album(s)
-15. 3c_flickr_photos.py # Fetch photo metadata
-16. 3d_flickr_classify.py # AI classify flight vs other photos
-17. 3e_images_nasa_gov.py # Fetch images.nasa.gov
-18. 3f_web_photos.py # Generate photos.json
+13. 3a_ia_stills_download.py    # Download still imagery from IA (if collection exists)
+14. 3a2_io_photo_catalog.py     # Scrape IO flight photo collections (~43,000 photos)
+15. 3a3_io_exif_scrape.py       # Ground-camera TZ corrections + onboard datetimes
+16. 3b_flickr_albums.py         # Fetch Flickr album metadata (NASA Johnson + NASA HQ)
+17. 3e_images_nasa_gov.py       # Catalog images.nasa.gov
+18. 3e2_io_nhq_lookup.py        # Reverse-lookup NHQ photos in IO for second-precision dates
+19. 3f_download_photos.py       # Download Flickr + images.nasa.gov originals
+20. 3g_eol_json.py              # Fetch EOL crew photography metadata (~12,000 entries)
+21. 3h_download_eol_photos.py   # Download EOL large JPEGs to disk
+22. 4a_extract_all_exif.py      # Per-copy EXIF (raw_crew via ExifTool, JPEGs via PIL)
+23. 4b_detect_brackets.py       # Detect AEB bracket sets from EXIF
+24. 4c_build_ledger.py          # Build canonical per-NASA-ID ledger
+25. 4d_generate_tiers.py        # Generate web tier JPEGs (thumb/lowres/hires)
+26. 4e_web_photos_json.py       # Emit web/photos.json from the ledger
 
 ```
 
