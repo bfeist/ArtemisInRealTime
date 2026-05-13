@@ -246,8 +246,8 @@ MISSIONS: dict[str, MissionConfig] = {
     "artemis-ii": MissionConfig(
         name="Artemis II",
         slug="artemis-ii",
-        mission_start="2026-03-31",
-        mission_end="2026-04-11",
+        mission_start="2026-03-30",
+        mission_end="2026-04-12",
         ia_subject_tag="Artemis II Resource Reel",
         ia_collections=["Artemis-II"],
         ia_comm_collection="Artemis-II-ACR-Collection",

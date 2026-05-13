@@ -21,6 +21,7 @@ export interface Photo {
   imgUrl: string;
   hiResUrl: string;
   exifUrl: string;
+  hasExif: boolean;
   exportedIn: ExportSource[];
   bracketSetId?: string;
 }

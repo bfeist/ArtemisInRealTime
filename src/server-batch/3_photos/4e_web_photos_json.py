@@ -54,6 +54,21 @@ def _in_window(rec: LedgerRecord, start: date, end: date) -> bool:
     return start <= d <= end
 
 
+def _has_real_exif(rec: LedgerRecord) -> bool:
+    """True when the record carries at least one copy with EXIF data.
+    Records sourced solely from IO metadata scrapes (no copy on disk, or
+    copies whose EXIF block was empty) won't have anything meaningful for
+    the frontend to display."""
+    raw = rec.copies.get(RAW_EXIF_SOURCE)
+    if raw and raw.exif:
+        return True
+    for src in NON_RAW_EXIF_SOURCES:
+        copy = rec.copies.get(src)
+        if copy and copy.exif:
+            return True
+    return False
+
+
 def _record_to_web(rec: LedgerRecord, *, has_publishable_set: bool) -> dict:
     """Slim per-photo entry. The full bracket-set definition (members, EVs,
     detection source) lives in brackets.json so we don't duplicate it here."""
@@ -68,6 +83,7 @@ def _record_to_web(rec: LedgerRecord, *, has_publishable_set: bool) -> dict:
         "hiResUrl":    f"{TIER_URL_BASE}/hires/{rec.nasa_id}.jpg",
         "exifUrl":     f"{TIER_URL_BASE}/exif/{rec.nasa_id}.json",
         "exportedIn":  rec.exported_in,
+        "hasExif":     _has_real_exif(rec),
     }
     if rec.bracket and has_publishable_set:
         # Just a pointer — frontend looks up members + EVs in brackets.json

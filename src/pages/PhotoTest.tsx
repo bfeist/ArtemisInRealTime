@@ -37,7 +37,7 @@ function flightDay(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "FD-??";
   const days = Math.floor((t - MISSION_START_UTC) / 86400000) + 1;
-  if (days < 1) return "Pre-launch";
+  if (days < 0) return "Pre-launch";
   return `FD-${String(days).padStart(2, "0")}`;
 }
 
@@ -210,7 +210,7 @@ function PhotoCard({ photo, onClick }: CardProps): JSX.Element {
       <div className={styles.thumbWrap}>
         <img
           className={styles.thumb}
-          src={`${ASSETS_BASE}/artemis-ii/web${photo.thumbUrl}`}
+          src={`${ASSETS_BASE}/artemis-ii/web${photo.thumbUrl}`.replaceAll(" ", "%20")}
           alt={photo.title || photo.id}
           loading="lazy"
         />

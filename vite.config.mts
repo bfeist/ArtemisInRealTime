@@ -22,7 +22,9 @@ export default defineConfig({
           ".gif": "image/gif",
         };
         server.middlewares.use("/artemis-assets", (req, res, next) => {
-          const filePath = path.join(assetsDir, req.url ?? "");
+          // Decode %20 etc. so filenames with spaces resolve on disk.
+          const decoded = decodeURIComponent(req.url ?? "");
+          const filePath = path.join(assetsDir, decoded);
           const normalized = path.normalize(filePath);
           if (!normalized.startsWith(assetsDir)) {
             res.statusCode = 403;
