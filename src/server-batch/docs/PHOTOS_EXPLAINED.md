@@ -195,6 +195,14 @@ NASA's public image search. Often duplicates Flickr but sometimes has unique
 items, especially NHQ press shots. Returns multiple sizes (~thumb / ~small /
 ~medium / ~large). Photos here are public by definition.
 
+### 7. Manual additions (`manual`)
+
+Photos obtained outside the automated pipeline — press handouts, social media
+grabs, personal event photos, etc. Drop JPEG/PNG/TIFF files named by NASA ID
+into `raw/photos/manual/`. File presence implies exported (the user asserts
+clearance by placing the file). EXIF is extracted via PIL; the date-priority
+chain derives UTC from EXIF if an offset tag is present.
+
 ---
 
 ## Where We Are Today (the incremental mess)
@@ -257,13 +265,15 @@ F:\_repos\ArtemisInRealTime_assets\{mission}\raw\photos\
   ia_stills\                 # JPEGs from IA bulk uploads
   flickr\                    # originals from Flickr (+ album_metadata.json)
   images_nasa_gov\           # originals from images.nasa.gov (+ catalog.json)
+  manual\                    # manually added photos from outside the pipeline
 ```
 
 In code these are addressed via `mission.photos_raw_crew`,
 `mission.photos_eol`, `mission.photos_ia_stills`, `mission.photos_flickr_orig`,
-`mission.photos_nasa_orig`. The internal source-key names used in the ledger
-and EXIF cache (`raw_crew`, `eol`, `ia_stills`, `flickr`, `nasa_images`) are
-short identifiers and don't need to match the on-disk folder names.
+`mission.photos_nasa_orig`, `mission.photos_manual`. The internal source-key
+names used in the ledger and EXIF cache (`raw_crew`, `eol`, `ia_stills`,
+`flickr`, `nasa_images`, `manual`) are short identifiers and don't need to
+match the on-disk folder names.
 
 ### B. A canonical per-NASA-ID ledger
 

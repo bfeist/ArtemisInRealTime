@@ -66,7 +66,7 @@ DOWNSCALE_TIERS: list[tuple[str, int, int]] = [
 # yet on EOL — the embedded NEF JPEG is what the camera produced and is
 # what EOL itself starts from.
 SOURCE_PRIORITY: tuple[str, ...] = (
-    "eol", "nasa_images", "flickr", "raw_crew", "ia_stills"
+    "eol", "nasa_images", "flickr", "raw_crew", "ia_stills", "manual"
 )
 
 DEFAULT_WORKERS = 4

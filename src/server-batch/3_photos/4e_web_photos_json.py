@@ -41,7 +41,7 @@ TIER_URL_BASE = "/photos"
 # blocks. For non-raw sources the picker falls back to whichever copy has
 # the most EXIF fields (see _count_exif_fields).
 RAW_EXIF_SOURCE = "raw_crew"
-NON_RAW_EXIF_SOURCES = ("eol", "nasa_images", "flickr", "ia_stills")
+NON_RAW_EXIF_SOURCES = ("eol", "nasa_images", "flickr", "ia_stills", "manual")
 
 
 def _in_window(rec: LedgerRecord, start: date, end: date) -> bool:

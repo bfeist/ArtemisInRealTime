@@ -307,6 +307,7 @@ def extract_all(mission: MissionConfig) -> None:
         ("ia_stills",   mission.photos_ia_stills),
         ("flickr",      mission.photos_flickr_orig),
         ("nasa_images", mission.photos_nasa_orig),
+        ("manual",      mission.photos_manual),
     ]
 
     # raw_crew goes through ExifTool. Falls back to legacy CREW_RAW_SOURCE_DIR

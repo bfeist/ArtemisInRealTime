@@ -28,6 +28,7 @@ SOURCES: tuple[str, ...] = (
     "ia_stills",    # JPEGs from Internet Archive bulk uploads
     "flickr",       # Originals from Flickr (url_o)
     "nasa_images",  # Originals from images.nasa.gov (~orig)
+    "manual",       # Manually added photos from outside the pipeline
 )
 
 

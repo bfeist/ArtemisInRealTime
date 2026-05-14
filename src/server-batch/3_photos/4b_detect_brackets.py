@@ -166,8 +166,8 @@ def _load_frames(exif_dir: Path) -> dict[str, dict]:
     catch e.g. a flickr-only release of a bracketed shot.
     """
     out: dict[str, dict] = {}
-    # Preference order: raw_crew > eol > flickr > nasa_images > ia_stills
-    for source in ("raw_crew", "eol", "flickr", "nasa_images", "ia_stills"):
+    # Preference order: raw_crew > eol > flickr > nasa_images > ia_stills > manual
+    for source in ("raw_crew", "eol", "flickr", "nasa_images", "ia_stills", "manual"):
         src_dir = exif_dir / source
         if not src_dir.exists():
             continue

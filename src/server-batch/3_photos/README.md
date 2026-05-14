@@ -28,6 +28,7 @@ INTAKE (per-source — independent, parallelisable)
   3l    NEF ↔ EOL diff (diagnostic)→ stdout / optional .txt
 
   (manual)  Crew NEF + DNG drop    → raw/photos/5_Crew-Captured-Imagery/**
+  (manual)  External photo drop    → raw/photos/manual/*.jpg  (see below)
 
 BUILD (depends on intake — sequential)
 ─────────────────────────────────────────────────
@@ -117,6 +118,40 @@ nothing has changed (each step skips up-to-date work).
 | ---------- | ------- | ------------------------------------------------------------------------------------------- |
 | `exiftool` | `4a`    | Reads NEF/DNG including Nikon makernote bracket tags. `winget install OliverBetz.ExifTool`. |
 | `rawpy`    | `4d`    | libraw bindings — decode NEF + DNG. Installed via `uv sync`.                                |
+
+---
+
+## Manually added photos
+
+For photos obtained outside the automated intake pipeline (press handouts,
+social media, personal event photos, etc.), drop JPEG/PNG/TIFF files into:
+
+```
+{data_dir}/raw/photos/manual/
+```
+
+**Naming:** Files must be named by NASA ID — e.g. `art002e012345.jpg`,
+`jsc2026e054321.jpg`. The file stem (minus extension) becomes the NASA ID
+in the ledger. The `~orig` suffix convention from `3f` is also supported
+(e.g. `nhq202604010001~orig.jpg` → `nhq202604010001`).
+
+**Behaviour:**
+- File presence in `manual/` implies **exported** — by placing a photo here,
+  you are asserting it is cleared for public display.
+- EXIF is extracted via PIL in step `4a`, same as other JPEG sources.
+- The ledger build (`4c`) creates/updates the record with `exported_in`
+  including `"manual"`.
+- Tier generation (`4d`) will use the manual copy as a source when no
+  higher-priority source (EOL, Flickr, etc.) exists for the same NASA ID.
+- The date-priority chain tries to derive UTC from the EXIF
+  `DateTimeOriginal` + offset. If the JPEG has no offset tag, the date will
+  fall through to lower-priority sources (IO, Flickr, etc.) or remain empty.
+
+**Workflow:** after dropping files, re-run the build steps:
+
+```bash
+uv run run_all.py --mission artemis-ii --step 4a 4b 4c 4d 4e
+```
 
 ---
 

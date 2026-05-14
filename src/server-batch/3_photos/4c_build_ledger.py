@@ -501,6 +501,34 @@ def _add_raw_crew(
     return n
 
 
+def _add_manual(
+    records: dict[str, LedgerRecord],
+    file_dir: Path,
+) -> tuple[int, int]:
+    """2e. Manually added photos — file presence implies exported.
+
+    The manual source is for photos obtained outside the automated pipeline
+    (e.g. press handouts, social media grabs, personal photos from events).
+    Drop a JPEG/PNG/TIFF into `raw/photos/manual/` named by NASA ID (e.g.
+    `art002e012345.jpg`) and re-run the build steps (4a–4e). The photo will
+    be extracted, ledgered, tier-generated, and published automatically.
+
+    Unlike `raw_crew`, file presence here *does* imply exported — the user is
+    asserting that the photo is safe to publish by placing it in this folder.
+    """
+    files = _scan_dir_to_nasa_id(
+        file_dir, {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+    )
+    marked = with_file = 0
+    for nasa_id, path in files.items():
+        rec = records.setdefault(nasa_id, LedgerRecord(nasa_id=nasa_id))
+        rec.mark_exported_in("manual")
+        marked += 1
+        rec.copies["manual"] = Copy(path=str(path))
+        with_file += 1
+    return marked, with_file
+
+
 def _attach_exif(
     records: dict[str, LedgerRecord],
     exif_dir: Path,
@@ -548,7 +576,7 @@ def _resolve_date(
     # 1. EXIF offset — derive UTC on the fly from each copy's EXIF.
     # raw_crew first because the NEF carries Composite:SubSecDateTimeOriginal
     # (sub-second) and Nikon's MakerNotes:TimeZone alias.
-    for source in ("raw_crew", "eol", "flickr", "nasa_images", "ia_stills"):
+    for source in ("raw_crew", "eol", "flickr", "nasa_images", "ia_stills", "manual"):
         copy = rec.copies.get(source)
         if not copy or not copy.exif:
             continue
@@ -707,6 +735,12 @@ def build_ledger(mission: MissionConfig) -> None:
     console.print(
         f"  IA stills:         [cyan]{ia_marked:>6}[/cyan] exported "
         f"([dim]{ia_files} files[/dim])"
+    )
+
+    manual_marked, manual_files = _add_manual(records, mission.photos_manual)
+    console.print(
+        f"  Manual:            [cyan]{manual_marked:>6}[/cyan] exported "
+        f"([dim]{manual_files} files[/dim])"
     )
 
     # 3. Crew raws — files only, no export effect

@@ -121,6 +121,14 @@ class MissionConfig:
         """Originals downloaded from images.nasa.gov (~orig)."""
         return self.data_dir / "raw" / "photos" / "images_nasa_gov"
 
+    @property
+    def photos_manual(self) -> Path:
+        """Manually added photos from outside the pipeline.
+        Drop JPEG/PNG/TIFF files here named by NASA ID (e.g.
+        `art002e012345.jpg`). They are treated as exported and flow
+        through EXIF extraction, ledger build, and tier generation."""
+        return self.data_dir / "raw" / "photos" / "manual"
+
     # ── Per-source intake metadata (raw, source-shaped) ───────────────────
 
     @property
@@ -212,6 +220,7 @@ class MissionConfig:
             self.photos_ia_stills,
             self.photos_flickr_orig,
             self.photos_nasa_orig,
+            self.photos_manual,
             self.exif_cache_dir,
             self.web_photos_thumb,
             self.web_photos_lowres,
