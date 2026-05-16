@@ -9,12 +9,14 @@ import {
 } from "react-router-dom";
 import App from "./App.tsx";
 import ComingSoon from "./pages/ComingSoon.tsx";
+import CommTest from "./pages/CommTest.tsx";
 import PhotoTest from "./pages/PhotoTest.tsx";
 
 const router = createBrowserRouter(
   createRoutesFromElements(
     <Route path="/" element={<App />}>
       <Route index element={<ComingSoon />} />
+      <Route path="comm-test" element={<CommTest />} />
       <Route path="photo-test" element={<PhotoTest />} />
     </Route>
   )

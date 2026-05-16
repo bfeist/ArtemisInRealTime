@@ -20,6 +20,9 @@ export default defineConfig({
           ".png": "image/png",
           ".webp": "image/webp",
           ".gif": "image/gif",
+          ".aac": "audio/aac",
+          ".mp3": "audio/mpeg",
+          ".wav": "audio/wav",
         };
         server.middlewares.use("/artemis-assets", (req, res, next) => {
           // Decode %20 etc. so filenames with spaces resolve on disk.

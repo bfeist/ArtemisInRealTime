@@ -1,0 +1,279 @@
+.page {
+  padding: 1.5rem;
+  font-family: "Roboto Mono", monospace;
+  background: #111111;
+  color: #e8e8e8;
+  min-height: 100vh;
+}
+
+.heading {
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.status {
+  margin-bottom: 1rem;
+  color: #888888;
+  font-size: 0.9rem;
+}
+
+/* ── stats strip ─────────────────────────────────────────────── */
+
+.statsStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+}
+
+.statCard {
+  background: #1e1e1e;
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  min-width: 140px;
+}
+
+.statBig {
+  font-size: 1.5rem;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.statLabel {
+  font-size: 0.7rem;
+  color: #888888;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.3rem;
+}
+
+/* ── channel toggles ─────────────────────────────────────────── */
+
+.channelToggles {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.toggleLabel {
+  font-size: 0.75rem;
+  color: #888888;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 0.25rem;
+}
+
+.toggle {
+  padding: 0.35rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-family: monospace;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  border: 2px solid transparent;
+  transition:
+    opacity 0.15s,
+    border-color 0.15s;
+}
+
+.toggle:focus-visible {
+  outline: 2px solid #ffffff80;
+  outline-offset: 2px;
+}
+
+/* OE-1 — blue */
+.toggleOE1Active {
+  background: #1a3a5c;
+  border-color: #4a9eff;
+  color: #9dd4ff;
+}
+
+.toggleOE1Inactive {
+  background: #111111;
+  border-color: #2a4a6c;
+  color: #3a6a9c;
+  opacity: 0.6;
+}
+
+/* OE-2 — amber */
+.toggleOE2Active {
+  background: #4a3000;
+  border-color: #ffaa00;
+  color: #ffd580;
+}
+
+.toggleOE2Inactive {
+  background: #111111;
+  border-color: #4a3a00;
+  color: #6a5000;
+  opacity: 0.6;
+}
+
+/* ── transcript list ─────────────────────────────────────────── */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.entry {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #1e1e1e;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  display: grid;
+  grid-template-columns: 6rem 3.5rem 1fr;
+  gap: 0.5rem;
+  padding: 0.45rem 0.5rem;
+  align-items: baseline;
+}
+
+.entry:hover {
+  background: #1a1a1a;
+}
+
+.entryActive {
+  background: #1a1e2a;
+  outline: 1px solid #4a9eff40;
+  outline-offset: -1px;
+}
+
+.time {
+  font-size: 0.8rem;
+  font-family: monospace;
+  color: #888888;
+  white-space: nowrap;
+}
+
+.channel {
+  font-size: 0.72rem;
+  font-family: monospace;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-align: center;
+}
+
+.channelOE1 {
+  background: #1a3a5c;
+  color: #9dd4ff;
+}
+
+.channelOE2 {
+  background: #4a3000;
+  color: #ffd580;
+}
+
+.channelUnknown {
+  background: #2a2a2a;
+  color: #888888;
+}
+
+.text {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: #cccccc;
+}
+
+.empty {
+  color: #666666;
+  font-size: 0.9rem;
+  padding: 1rem 0;
+}
+
+/* ── player bar ──────────────────────────────────────────────── */
+
+.playerBar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: #141826;
+  border: 1px solid #2a3a5c;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.playerMeta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.playerTime {
+  font-size: 0.8rem;
+  font-family: monospace;
+  color: #888888;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.playerText {
+  font-size: 0.8rem;
+  color: #cccccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.audioEl {
+  height: 32px;
+  flex-shrink: 0;
+  accent-color: #4a9eff;
+}
+
+.playerClose {
+  background: none;
+  border: none;
+  color: #888888;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.playerClose:hover {
+  color: #cccccc;
+  background: #2a2a2a;
+}
+
+/* ── day sections ─────────────────────────────────────────────── */
+
+.fdSection {
+  margin-bottom: 1rem;
+}
+
+.fdHeading {
+  font-size: 1rem;
+  margin: 0 0 0;
+  padding: 0.4rem 0.5rem 0.3rem;
+  border-bottom: 1px solid #2a2a2a;
+  font-family: monospace;
+  letter-spacing: 0.05em;
+  color: #aaaaaa;
+}
+
+.fdCount {
+  color: #666666;
+  font-weight: normal;
+  font-size: 0.85rem;
+}

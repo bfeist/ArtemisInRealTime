@@ -13,11 +13,19 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import MISSIONS, MissionConfig
+
+def _offset_utc(utc_str: str, seconds: float) -> str:
+    """Return a new ISO-8601 UTC string shifted by `seconds`."""
+    dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+    dt += timedelta(seconds=seconds)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"  # trim µs to ms
+
 
 # Known hallucination strings
 HALLUCINATIONS = {
@@ -48,47 +56,38 @@ def build_web_comm(mission: MissionConfig) -> None:
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # Join segment text
-        segments = data.get("segments", [])
-        text = " ".join(s.get("text", "").strip() for s in segments)
-
-        if not text.strip() or text.strip() in HALLUCINATIONS:
-            continue
-
-        entry = {
-            "t": data.get("utcTime", ""),
-            "d": data.get("duration", 0),
-            "text": text,
-            "lang": data.get("language", "en"),
-        }
-
-        # Include segment-level timing for the frontend
-        if segments:
-            entry["segments"] = [
-                {
-                    "s": s.get("start", 0),
-                    "e": s.get("end", 0),
-                    "text": s.get("text", "").strip(),
-                }
-                for s in segments
-                if s.get("text", "").strip()
-            ]
-
-        transcripts.append(entry)
-
-        # Collect CSV row data
+        base_utc = data.get("utcTime", "")
+        source = data.get("source", json_path.stem)
+        lang = data.get("language", "en")
         aac_name = json_path.stem + ".aac"
-        segs = entry.get("segments", [])
-        start = segs[0]["s"] if segs else ""
-        end = segs[-1]["e"] if segs else ""
-        csv_rows.append((
-            entry["t"][11:19],  # HH:MM:SS from utcTime
-            aac_name,
-            str(start),
-            str(end),
-            entry["lang"],
-            text,
-        ))
+
+        for seg in data.get("segments", []):
+            text = seg.get("text", "").strip()
+            if not text or text in HALLUCINATIONS:
+                continue
+
+            seg_start = seg.get("start", 0)
+            seg_end = seg.get("end", 0)
+            seg_utc = _offset_utc(base_utc, seg_start) if base_utc else ""
+
+            entry = {
+                "t": seg_utc,
+                "s": round(seg_start, 3),
+                "d": round(seg_end - seg_start, 3),
+                "src": aac_name,
+                "text": text,
+                "lang": lang,
+            }
+            transcripts.append(entry)
+
+            csv_rows.append((
+                seg_utc[11:23],  # HH:MM:SS.mmm
+                aac_name,
+                str(seg_start),
+                str(seg_end),
+                lang,
+                text,
+            ))
 
     # Sort transcripts by UTC time (csv_rows are already in the same order since
     # json files are walked sorted, but we re-sort to be safe)
