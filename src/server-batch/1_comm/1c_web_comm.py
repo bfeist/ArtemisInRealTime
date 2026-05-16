@@ -1,10 +1,12 @@
 """Step 1c — Produce web-ready comm JSON from transcripts.
 
-Reads per-file transcript JSONs and produces a single comm.json for
-the web frontend, sorted chronologically.
+Reads per-file transcript JSONs and produces a single comm.json and
+a pipe-delimited _transcript.csv for the web frontend, sorted
+chronologically. AAC files are written directly to web/comm/ by step 1b.
 
 Input:  {data_dir}/{mission}/processed/transcripts/comm/{date}/*.json
 Output: {data_dir}/{mission}/web/comm.json
+        {data_dir}/{mission}/web/comm/_transcript.csv
 """
 
 import argparse
@@ -38,8 +40,10 @@ def build_web_comm(mission: MissionConfig) -> None:
         print("  Run step 1b (transcription) first.")
         return
 
-    # Collect all transcript JSONs
+    # Collect all transcript JSONs, building comm entries and CSV rows
     transcripts = []
+    csv_rows = []       # (utc_time, aac_name, start, end, lang, text) tuples
+
     for json_path in sorted(transcript_dir.rglob("*.json")):
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -72,10 +76,27 @@ def build_web_comm(mission: MissionConfig) -> None:
 
         transcripts.append(entry)
 
-    # Sort by UTC time
-    transcripts.sort(key=lambda x: x["t"])
+        # Collect CSV row data
+        aac_name = json_path.stem + ".aac"
+        segs = entry.get("segments", [])
+        start = segs[0]["s"] if segs else ""
+        end = segs[-1]["e"] if segs else ""
+        csv_rows.append((
+            entry["t"][11:19],  # HH:MM:SS from utcTime
+            aac_name,
+            str(start),
+            str(end),
+            entry["lang"],
+            text,
+        ))
 
-    # Write output
+    # Sort transcripts by UTC time (csv_rows are already in the same order since
+    # json files are walked sorted, but we re-sort to be safe)
+    order = sorted(range(len(transcripts)), key=lambda i: transcripts[i]["t"])
+    transcripts = [transcripts[i] for i in order]
+    csv_rows = [csv_rows[i] for i in order]
+
+    # Write comm.json
     out_path = mission.web_dir / "comm.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
@@ -88,6 +109,15 @@ def build_web_comm(mission: MissionConfig) -> None:
         print(f"  Time range: {transcripts[0]['t']} to {transcripts[-1]['t']}")
         total_dur = sum(t.get("d", 0) for t in transcripts)
         print(f"  Total audio duration: {total_dur / 3600:.1f} hours")
+
+    # Write pipe-delimited _transcript.csv
+    comm_web_dir = mission.web_dir / "comm"
+    comm_web_dir.mkdir(parents=True, exist_ok=True)
+    transcript_path = comm_web_dir / "_transcript.csv"
+    with open(transcript_path, "w", encoding="utf-8") as f:
+        for row in csv_rows:
+            f.write("|".join(row) + "\n")
+    print(f"  Wrote {len(csv_rows)} rows to {transcript_path}")
 
 
 def main():

@@ -13,6 +13,8 @@ import inspect
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 import wave
@@ -53,6 +55,33 @@ INITIAL_PROMPT = (
 )
 
 WHISPERX_SAMPLE_RATE = 16000
+AAC_BITRATE = "64k"
+AAC_SAMPLE_RATE = 22050
+
+
+def _ffmpeg_exe() -> str:
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        raise RuntimeError("ffmpeg not found on PATH")
+    return exe
+
+
+def convert_wav_to_aac(wav_path: Path, aac_path: Path) -> None:
+    """Convert a WAV file to AAC (m4a) using ffmpeg."""
+    aac_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        _ffmpeg_exe(),
+        "-hide_banner", "-loglevel", "error",
+        "-nostdin", "-y",
+        "-i", str(wav_path),
+        "-ac", "1",
+        "-ar", str(AAC_SAMPLE_RATE),
+        "-c:a", "aac",
+        "-b:a", AAC_BITRATE,
+        "-movflags", "+faststart",
+        str(aac_path),
+    ]
+    subprocess.run(cmd, check=True)
 
 
 def load_wav_audio(wav_path: Path, target_sr: int = WHISPERX_SAMPLE_RATE) -> np.ndarray:
@@ -125,6 +154,7 @@ def transcribe_wav(
     output_dir: Path,
     whisper_resources,
     force: bool = False,
+    aac_dir: Path | None = None,
 ) -> dict | None:
     """Transcribe a single WAV file and save the result as JSON."""
     out_name = wav_path.stem + ".json"
@@ -142,7 +172,11 @@ def transcribe_wav(
         return None
 
     # Transcribe
-    result = whisper_resources.transcribe(audio, initial_prompt=INITIAL_PROMPT)
+    try:
+        result = whisper_resources.transcribe(audio, initial_prompt=INITIAL_PROMPT)
+    except (IndexError, ValueError):
+        # WhisperX raises IndexError when VAD finds no active speech segments
+        return None
 
     language = result.get("language", "en")
     segments = result.get("segments", [])
@@ -174,6 +208,16 @@ def transcribe_wav(
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    # Create AAC in web comm dir
+    _aac_dir = aac_dir if aac_dir is not None else output_dir
+    aac_path = _aac_dir / (wav_path.stem + ".aac")
+    if not aac_path.exists():
+        _aac_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            convert_wav_to_aac(wav_path, aac_path)
+        except Exception as e:
+            print(f"    Warning: AAC conversion failed for {wav_path.name}: {e}")
 
     return payload
 
@@ -258,6 +302,7 @@ def transcribe_comm(
 
     transcript_dir = mission.processed_transcripts / "comm"
     transcript_dir.mkdir(parents=True, exist_ok=True)
+    web_comm_dir = mission.web_dir / "comm"
 
     # Check how many are already done
     already_done = 0
@@ -279,43 +324,66 @@ def transcribe_comm(
         print(f"  --test {test}: processing only {len(to_process)} file(s)")
 
     if not to_process:
-        print("  Nothing to do.")
-        return
+        print("  Nothing to transcribe.")
+    else:
+        # Load model
+        device = os.environ.get("WHISPER_DEVICE", "cuda")
+        compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
+        batch_size = int(os.environ.get("WHISPER_BATCH_SIZE", "16"))
+        resources = WhisperResources(device, compute_type, batch_size)
 
-    # Load model
-    device = os.environ.get("WHISPER_DEVICE", "cuda")
-    compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
-    batch_size = int(os.environ.get("WHISPER_BATCH_SIZE", "16"))
-    resources = WhisperResources(device, compute_type, batch_size)
+        start = time.time()
+        transcribed = 0
+        skipped = 0
+        errors = 0
 
-    start = time.time()
-    transcribed = 0
-    skipped = 0
-    errors = 0
+        for i, (wav_path, utc_time) in enumerate(to_process, 1):
+            date_str = utc_time.strftime("%Y-%m-%d")
+            out_dir = transcript_dir / date_str
+            aac_dir = web_comm_dir / date_str
 
-    for i, (wav_path, utc_time) in enumerate(to_process, 1):
-        date_str = utc_time.strftime("%Y-%m-%d")
-        out_dir = transcript_dir / date_str
+            try:
+                result = transcribe_wav(wav_path, utc_time, out_dir, resources, force=force, aac_dir=aac_dir)
+                if result is not None:
+                    transcribed += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                print(f"    Error transcribing {wav_path.name}: {e}")
+                errors += 1
 
-        try:
-            result = transcribe_wav(wav_path, utc_time, out_dir, resources, force=force)
-            if result is not None:
-                transcribed += 1
-            else:
-                skipped += 1
-        except Exception as e:
-            print(f"    Error transcribing {wav_path.name}: {e}")
-            errors += 1
+            if i % 50 == 0 or i == len(to_process):
+                elapsed = time.time() - start
+                rate = i / elapsed if elapsed > 0 else 0
+                print(f"  [{i}/{len(to_process)}] {transcribed} transcribed, "
+                      f"{skipped} skipped, {errors} errors ({rate:.1f} files/s)")
 
-        if i % 50 == 0 or i == len(to_process):
-            elapsed = time.time() - start
-            rate = i / elapsed if elapsed > 0 else 0
-            print(f"  [{i}/{len(to_process)}] {transcribed} transcribed, "
-                  f"{skipped} skipped, {errors} errors ({rate:.1f} files/s)")
+        elapsed = time.time() - start
+        print(f"\n  Done in {elapsed:.1f}s: {transcribed} transcribed, "
+              f"{skipped} skipped (short/hallucination), {errors} errors")
 
-    elapsed = time.time() - start
-    print(f"\n  Done in {elapsed:.1f}s: {transcribed} transcribed, "
-          f"{skipped} skipped (short/hallucination), {errors} errors")
+    # Backfill AAC files for any existing transcript that's missing its pair
+    aac_needed = [
+        (wav_path, utc_time)
+        for wav_path, utc_time in wav_files
+        if (transcript_dir / utc_time.strftime("%Y-%m-%d") / (wav_path.stem + ".json")).exists()
+        and not (web_comm_dir / utc_time.strftime("%Y-%m-%d") / (wav_path.stem + ".aac")).exists()
+    ]
+    if aac_needed:
+        print(f"\n  Backfilling {len(aac_needed)} missing AAC file(s)...")
+        aac_ok = 0
+        aac_err = 0
+        for wav_path, utc_time in aac_needed:
+            date_str = utc_time.strftime("%Y-%m-%d")
+            aac_path = web_comm_dir / date_str / (wav_path.stem + ".aac")
+            aac_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                convert_wav_to_aac(wav_path, aac_path)
+                aac_ok += 1
+            except Exception as e:
+                print(f"    Warning: AAC conversion failed for {wav_path.name}: {e}")
+                aac_err += 1
+        print(f"  AAC backfill: {aac_ok} created, {aac_err} error(s)")
 
 
 def main():
