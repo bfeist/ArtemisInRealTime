@@ -11,6 +11,7 @@ import App from "./App.tsx";
 import ComingSoon from "./pages/ComingSoon.tsx";
 import CommTest from "./pages/CommTest.tsx";
 import PhotoTest from "./pages/PhotoTest.tsx";
+import TrajectoryTest from "./pages/TrajectoryTest.tsx";
 
 const router = createBrowserRouter(
   createRoutesFromElements(
@@ -18,6 +19,7 @@ const router = createBrowserRouter(
       <Route index element={<ComingSoon />} />
       <Route path="comm-test" element={<CommTest />} />
       <Route path="photo-test" element={<PhotoTest />} />
+      <Route path="trajectory-test" element={<TrajectoryTest />} />
     </Route>
   )
 );

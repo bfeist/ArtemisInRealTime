@@ -51,6 +51,11 @@ STEPS = [
     ("4d", "3_photos.4d_generate_tiers",   "Generate web tier JPEGs (thumb/lowres/hires)", None),
     ("4e", "3_photos.4e_web_photos_json",  "Emit web/photos.json from the ledger", None),
     ("4f", "3_photos.4f_cleanup_web",      "Delete stale web/ files (run after 4e)", None),
+    # ── 5* — trajectory ──
+    ("5a", "5_trajectory.5a_orion_track",     "Build canonical Orion track from OEM/Horizons", None),
+    ("5b", "5_trajectory.5b_moon_ephemeris",  "Compute geocentric Moon at every Orion sample", None),
+    ("5c", "5_trajectory.5c_web_trajectory",  "Emit web/ephemeris/trajectory.json", None),
+    ("5d", "5_trajectory.5d_web_itinerary",   "Emit web/ephemeris/itinerary.json",  None),
 ]
 
 

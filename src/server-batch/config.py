@@ -73,6 +73,19 @@ class MissionConfig:
     flickr_album_keywords: list[str] = field(default_factory=list)
     nasa_id_patterns: list[str] = field(default_factory=list)
 
+    # ── Trajectory / ephemeris (step 5_trajectory) ────────────────────────
+    # Where to get Orion's geocentric position. "oem" = parse CCSDS OEM zips
+    # in raw/ephemeris/ (Artemis II onward). "horizons" = fetch from JPL
+    # Horizons API (Artemis I — NASA never publicly released the OEMs).
+    ephemeris_source: str = "oem"
+    # JPL Horizons body ID for the spacecraft (negative integer as a string).
+    horizons_id: str | None = None
+    # Precise launch / splashdown UTC for HUD display (mission_start/end are
+    # date-only). Optional — if absent the frontend falls back to the first
+    # and last ephemeris point.
+    launch_utc: str | None = None
+    splashdown_utc: str | None = None
+
     # ── derived paths ─────────────────────────────────────────────────────
 
     @property
@@ -201,6 +214,23 @@ class MissionConfig:
     def io_cache(self) -> Path:
         return self.data_dir / "processed" / "io_cache"
 
+    # ── Ephemeris / trajectory (step 5_trajectory) ────────────────────────
+
+    @property
+    def raw_ephemeris(self) -> Path:
+        """Mission-supplied OEM zips (Artemis II) or Horizons cache (Artemis I)."""
+        return self.data_dir / "raw" / "ephemeris"
+
+    @property
+    def processed_ephemeris(self) -> Path:
+        """Normalized intermediate JSONL: orion_track + moon_track."""
+        return self.data_dir / "processed" / "ephemeris"
+
+    @property
+    def web_ephemeris(self) -> Path:
+        """trajectory.json consumed by the frontend."""
+        return self.data_dir / "web" / "ephemeris"
+
     @property
     def web_dir(self) -> Path:
         return self.data_dir / "web"
@@ -251,6 +281,10 @@ MISSIONS: dict[str, MissionConfig] = {
         flickr_album_id="72177720303788800",
         flickr_album_keywords=["Artemis I", "Artemis 1"],
         nasa_id_patterns=[r"art\d+[me]\d+", r"jsc\d{4}m\d+"],
+        ephemeris_source="horizons",
+        horizons_id="-1023",
+        launch_utc="2022-11-16T06:47:44Z",
+        splashdown_utc="2022-12-11T17:40:00Z",
     ),
     "artemis-ii": MissionConfig(
         name="Artemis II",
@@ -288,6 +322,10 @@ MISSIONS: dict[str, MissionConfig] = {
         ],
         flickr_album_keywords=["Artemis II", "Artemis 2"],
         nasa_id_patterns=[r"jsc\d{4}m\d+", r"art\d+[me]\d+"],
+        ephemeris_source="oem",
+        horizons_id="-1024",
+        launch_utc="2026-04-01T22:35:12Z",
+        splashdown_utc="2026-04-11T00:07:00Z",
     ),
 }
 

@@ -20,6 +20,7 @@ dependencies = [
     "requests",
     "rich",
     "setuptools<81",
+    "skyfield",        # JPL ephemeris (DE440) — geocentric Moon position (step 5b)
     "tqdm",
     "yt-dlp",
     # ── Transcription (WhisperX / pyannote) ───────────────────────────────
