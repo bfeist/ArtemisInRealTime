@@ -7,6 +7,7 @@ dependencies = [
     "beautifulsoup4",
     "certifi",
     "google-api-python-client",
+    "google-auth-oauthlib",
     "lxml",
     "matplotlib",
     "numpy",
@@ -21,6 +22,7 @@ dependencies = [
     "rich",
     "setuptools<81",
     "skyfield",        # JPL ephemeris (DE440) — geocentric Moon position (step 5b)
+    "rapidfuzz",
     "tqdm",
     "yt-dlp",
     # ── Transcription (WhisperX / pyannote) ───────────────────────────────
@@ -36,6 +38,10 @@ dependencies = [
     "speechbrain==1.0.3",
     "webrtcvad-wheels",
     "whisperx==3.3.4",
+    # pyannote-audio 3.3.2 internally calls hf_hub_download(use_auth_token=...) which
+    # huggingface_hub ≥1.0.0 removed.  Pin until we upgrade to pyannote 4.x + whisperX
+    # 3.8.x (tracked: https://github.com/m-bain/whisperX/issues/1370).
+    "huggingface-hub<1.0.0",
 ]
 
 [tool.uv]

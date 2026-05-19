@@ -44,3 +44,4 @@ yarn-error.log*
 # MS Office temp files
 ~$*
 nul
+client_secrets.json

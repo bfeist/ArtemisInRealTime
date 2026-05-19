@@ -50,6 +50,16 @@ uv run python -m 2_video.2d_yt_metadata        --mission artemis-ii
 uv run python -m 2_video.2e_yt_download        --mission artemis-ii
 uv run python -m 2_video.2g_web_video          --mission artemis-ii
 
+# Step 2h splits a downloaded MKV into 12-hour parts; step 2j transcribes them.
+# --stream-start-utc is optional on 2j — omit to transcribe first, then re-run
+# with --stream-start-utc --dedup-only once the stream start UTC is determined.
+uv run python -m 2_video.2h_split_mkv          --mission artemis-ii
+uv run python -m 2_video.2j_transcribe_yt      --mission artemis-ii \
+    --input-dir "/path/to/yt_videos/artemis-ii"
+# Once stream start UTC is determined by comparing transcripts against comm:
+uv run python -m 2_video.2k_dedup_yt_comm      --mission artemis-ii \
+    --stream-start-utc "2026-03-30T12:00:00Z"
+
 uv run python -m 1_comm.1a_download_ia_zips    --mission artemis-ii
 uv run python -m 1_comm.1b_transcribe          --mission artemis-ii
 uv run python -m 1_comm.1c_web_comm            --mission artemis-ii
@@ -83,6 +93,9 @@ uv run run_all.py --mission artemis-ii --list
 | 2d     | Fetch YouTube metadata                  | all        |
 | 2e     | Download YouTube videos                 | all        |
 | 2g     | Produce web-ready video JSON            | all        |
+| 2h     | Split MKV into 12-hour MP4 parts        | artemis-ii |
+| 2j     | Transcribe YouTube parts (WhisperX)     | artemis-ii |
+| 2k     | Align to UTC + de-duplicate vs comm     | artemis-ii |
 | 3a     | Download IA stills                      | all        |
 | 3a2    | Scrape IO photo collections             | all        |
 | 3a3    | Scrape IO EXIF for timezone corrections | all        |

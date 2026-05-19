@@ -34,6 +34,10 @@ STEPS = [
     ("2d", "2_video.2d_yt_metadata", "Fetch YouTube metadata", None),
     ("2e", "2_video.2e_yt_download", "Download YouTube videos", None),
     ("2g", "2_video.2g_web_video", "Produce web-ready video JSON", None),
+    # ── 2h/2i — standalone scripts (no --mission arg); run directly via uv ───
+    # uv run 2_video/2h_split_mkv.py --input "D:/..." --output-dir "D:/chunks"
+    # uv run 2_video/2i_yt_upload.py --input-dir "D:/chunks"
+    ("2j", "2_video.2j_transcribe_yt", "Transcribe YT chunks, de-dup vs comm", {"artemis-ii"}),
     ("3a", "3_photos.3a_ia_stills_download", "Download IA stills", None),
     ("3a2", "3_photos.3a2_io_photo_catalog", "Scrape IO photo collections", None),
     ("3a3", "3_photos.3a3_io_exif_scrape", "Scrape IO EXIF for timezone corrections", None),

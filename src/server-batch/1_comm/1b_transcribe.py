@@ -173,7 +173,7 @@ def transcribe_wav(
 
     # Transcribe
     try:
-        result = whisper_resources.transcribe(audio, initial_prompt=INITIAL_PROMPT)
+        result = whisper_resources.transcribe(audio, language="en")
     except (IndexError, ValueError):
         # WhisperX raises IndexError when VAD finds no active speech segments
         return None
@@ -273,6 +273,7 @@ class WhisperResources:
         self._model = whisperx.load_model(
             "large-v3", self.device, compute_type=self.compute_type,
             vad_options={"vad_type": "silero"},
+            asr_options={"initial_prompt": INITIAL_PROMPT},
         )
 
     def transcribe(self, audio, **kwargs) -> dict:
