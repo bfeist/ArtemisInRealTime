@@ -192,3 +192,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: #bbbbbb;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggleRow input[type="checkbox"] {
+  accent-color: #f5c89c;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}

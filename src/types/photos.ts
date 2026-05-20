@@ -4,6 +4,7 @@ export type DateSource =
   | "io_exif"
   | "io_corrected"
   | "io_onboard"
+  | "exif_notz"
   | "flickr"
   | "nasa_images";
 

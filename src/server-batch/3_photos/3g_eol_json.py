@@ -328,8 +328,16 @@ def main():
     console.print(f"Output: {output_file}")
 
     if output_file.exists() and not args.overwrite:
-        console.print("[yellow]Output file already exists. Use --overwrite to regenerate.[/yellow]")
-        sys.exit(0)
+        # Load prior manifest so we can merge rather than just skip.
+        with open(output_file, "r", encoding="utf-8") as f:
+            prior_manifest: list = json.load(f)
+        console.print(
+            f"[yellow]Output file exists ({len(prior_manifest)} photos). "
+            "Fetching fresh data to check for new entries "
+            "(use --overwrite to also refresh existing records).[/yellow]"
+        )
+    else:
+        prior_manifest = []
 
     # Step 1: Fetch all image file records
     console.print("[cyan]Fetching images table...[/cyan]")
@@ -360,6 +368,25 @@ def main():
         console.print("[bold red]No manifest entries built.[/bold red]")
         sys.exit(1)
 
+    # Merge with prior data when not doing a full overwrite.
+    # Key is the EOL composite ID (e.g. "ART002E001").
+    if prior_manifest and not args.overwrite:
+        prior_by_id = {e["ID"]: e for e in prior_manifest if e.get("ID")}
+        fresh_by_id = {e["ID"]: e for e in manifest if e.get("ID")}
+        new_ids = set(fresh_by_id) - set(prior_by_id)
+        # Prior entries for IDs the API no longer returns are kept intact.
+        merged_by_id = {**prior_by_id, **fresh_by_id}
+        manifest = sorted(
+            merged_by_id.values(),
+            key=lambda e: int("".join(filter(str.isdigit, e["ID"].split("E")[-1])) or "0"),
+        )
+        if new_ids:
+            console.print(f"[green]  → {len(new_ids)} new EOL photo(s) added[/green]")
+        else:
+            console.print("[dim]  → No new EOL photos found since last run.[/dim]")
+    elif prior_manifest and args.overwrite:
+        pass  # fresh manifest already complete; prior discarded intentionally
+
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
@@ -373,6 +400,7 @@ def main():
     summary.add_column("Metric", style="cyan")
     summary.add_column("Count", justify="right", style="green")
     summary.add_row("Total Photos", str(len(manifest)))
+    summary.add_row("Prior count", str(len(prior_manifest)) if prior_manifest else "—")
     summary.add_row("With dateTaken", str(has_date))
     summary.add_row("With Coordinates", str(has_coords))
     summary.add_row("With Corner Footprint", str(has_corners))

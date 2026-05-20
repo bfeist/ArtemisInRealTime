@@ -5,6 +5,12 @@ Usage (recommended — via uv):
     uv run run_all.py --mission artemis-ii --step 2a    # Run single step
     uv run run_all.py --mission artemis-i --step 2a 2b  # Run multiple steps
 
+    # Named step groups (shortcuts for common workflows):
+    uv run run_all.py --mission artemis-ii --step photos-refresh
+        Re-fetch Flickr/NASA/EOL metadata, download any new originals,
+        regenerate EXIF, ledger, tiers, and web JSON.  Safe to run at any
+        time — all download steps are idempotent (skip existing files).
+
     # Run an individual module directly
     uv run python -m 2_video.2a_ia_video_discover --mission artemis-ii
 
@@ -22,6 +28,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import MISSIONS
+
+# Named step groups — expand before individual step resolution.
+# These are the most common multi-step workflows.
+STEP_GROUPS: dict[str, list[str]] = {
+    # Re-check all external photo sources for new arrivals, download them,
+    # and rebuild the ledger + web tiers + photos.json.
+    # All download steps are idempotent — safe to re-run at any time.
+    "photos-refresh": ["3b", "3e", "3g_eol", "3f", "3h", "4a", "4b", "4c", "4d", "4e"],
+    # Re-scrape the IO photo catalog and EXIF overrides, then rebuild the ledger
+    # and web output.  Run this when IO adds new records or corrects timezone data.
+    "io-refresh": ["3a2", "3a3", "4c", "4d", "4e"],
+}
 
 # Step registry: (step_id, module_path, description, missions)
 # missions: None = all, or set of slugs
@@ -77,6 +95,11 @@ def run_step(step_id: str, module_path: str, description: str, mission_slug: str
         importlib.reload(module)
         module.main()
         return True
+    except SystemExit as e:
+        if e.code == 0:
+            return True
+        print(f"\n  ERROR in step {step_id}: sys.exit({e.code})")
+        return False
     except Exception as e:
         print(f"\n  ERROR in step {step_id}: {e}")
         import traceback
@@ -118,19 +141,31 @@ def main():
             else:
                 status = ""
             print(f"  {step_id:6s} {desc} {status}")
+        print(f"\nNamed step groups:")
+        for group, members in STEP_GROUPS.items():
+            print(f"  {group:20s} → {' '.join(members)}")
         return
 
     mission.ensure_dirs()
 
-    # Filter steps
+    # Filter steps — expand any named group tokens first.
     if args.step:
-        requested = set(args.step)
-        steps_to_run = [(s, m, d, a) for s, m, d, a in STEPS if s in requested]
-        unknown = requested - {s for s, _, _, _ in STEPS}
+        expanded: list[str] = []
+        for token in args.step:
+            if token in STEP_GROUPS:
+                expanded.extend(STEP_GROUPS[token])
+            else:
+                expanded.append(token)
+        requested = list(dict.fromkeys(expanded))  # deduplicate, preserve order
+        requested_set = set(requested)
+        known_ids = {s for s, _, _, _ in STEPS}
+        unknown = requested_set - known_ids
         if unknown:
             print(f"Unknown steps: {unknown}")
-            print(f"Available: {[s for s, _, _, _ in STEPS]}")
+            print(f"Available: {sorted(known_ids)}")
+            print(f"Available groups: {list(STEP_GROUPS)}")
             sys.exit(1)
+        steps_to_run = [(s, m, d, a) for sid in requested for s, m, d, a in STEPS if s == sid]
     else:
         steps_to_run = STEPS
 

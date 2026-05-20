@@ -202,6 +202,15 @@ def download_nasa_originals(mission: MissionConfig) -> None:
     total = len(items)
     print(f"  {total} items in NASA images catalog")
 
+    # Pre-scan existing files so we can skip before making any network calls.
+    # The stem is the NASA ID (lowercased); strip any ~orig suffix just in case.
+    existing_ids: set[str] = set()
+    if out_dir.exists():
+        for f in out_dir.iterdir():
+            if f.is_file():
+                stem = f.stem.lower()
+                existing_ids.add(stem.split("~")[0])
+
     downloaded = skipped = failed = 0
     for i, item in enumerate(items, 1):
         nasa_id = item.get("nasa_id", "")
@@ -209,7 +218,11 @@ def download_nasa_originals(mission: MissionConfig) -> None:
             failed += 1
             continue
 
-        # Resolve original asset URL
+        if nasa_id.lower() in existing_ids:
+            skipped += 1
+            continue
+
+        # Resolve original asset URL (only when not already on disk)
         orig_url = _nasa_orig_url(nasa_id)
         if not orig_url:
             failed += 1
@@ -220,7 +233,6 @@ def download_nasa_originals(mission: MissionConfig) -> None:
 
         if dest.exists():
             skipped += 1
-            time.sleep(0.05)
             continue
 
         ok = _download(orig_url, dest, desc=nasa_id)

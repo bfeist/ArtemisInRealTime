@@ -36,6 +36,49 @@ from shared.photos_ledger import (
 
 console = Console()
 
+# ── Description boilerplate cleanup ─────────────────────────────────────────
+# NASA IO work-order metadata often embeds administrative noise that is not
+# fit for public display. Strip it here so the ledger (and everything that
+# reads it) never sees it.
+_DESC_BOILERPLATE: list[tuple[re.Pattern, str]] = [
+    # Restriction / classification notices  e.g. "** RESTRICTED UNTIL EXPORT CONTROL REVIEWED **"
+    (re.compile(r"\*+\s*RESTRICTED\s+UNTIL\s+EXPORT\s+CONTROL\s+REVIEWED\s*\*+", re.IGNORECASE), ""),
+    # Any remaining double-asterisk annotation blocks  e.g. "** FOR OFFICIAL USE ONLY **"
+    (re.compile(r"\*{2,}[^*\n]{4,80}\*{2,}", re.IGNORECASE), ""),
+    # Work-request prefixes
+    (re.compile(r"^Work\s+Request\s+Description\s*:\s*", re.IGNORECASE), ""),
+    (re.compile(r"^Work\s+Request\s+Title\s*:\s*", re.IGNORECASE), ""),
+    (re.compile(r"^WR\s*#?\s*\d+\s*[:\-]\s*", re.IGNORECASE), ""),
+    # ITAR notices
+    (re.compile(r"ITAR\s*:?\s*controlled[.\s]*", re.IGNORECASE), ""),
+    # Leftover punctuation artifacts after stripping
+    (re.compile(r"^\s*[.\-\u2013\u2014,;]+\s*"), ""),
+    (re.compile(r"\s*[.\-\u2013\u2014,;]+\s*$"), ""),
+]
+
+
+def _clean_description(text: str) -> str:
+    """Strip known boilerplate patterns and return the cleaned description."""
+    result = text
+    for pattern, replacement in _DESC_BOILERPLATE:
+        result = pattern.sub(replacement, result)
+    return result.strip()
+
+
+# ── Camera offset corrections ────────────────────────────────────────────────
+# Some cameras have incorrect OffsetTime* EXIF tags — e.g. a camera that was
+# physically at KSC but still had a leftover timezone from a previous trip.
+# Map BodySerialNumber → correct UTC offset string so _exif_copy_to_utc can
+# substitute the right value and preserve sub-second precision.
+# Source: cross-reference with concurrent photos whose UTC is known correct.
+CAMERA_OFFSET_CORRECTIONS: dict[str, str] = {
+    # Canon EOS 7D Mark II, NASA/Bill Ingalls (NHQ). Camera clock was set
+    # ~1 h ahead of local EDT (-04:00) and the offset tag read +05:00.
+    # Cross-referenced against JSC crew launch photos at ~21:35 UTC:
+    # camera local 18:35 + 3 h = 21:35 UTC → correct offset -03:00.
+    "652057000325": "-03:00",
+}
+
 # ── Filename → NASA ID helpers ───────────────────────────────────────────────
 
 # Same regex used by 3f_download_photos.py for matching NASA IDs in free text.
@@ -125,6 +168,35 @@ def _io_local_to_utc(
     return _format_utc(local - offset)
 
 
+def _exif_copy_dto_raw(exif: dict) -> str | None:
+    """Return DateTimeOriginal from a copy's EXIF even when no UTC offset tag is
+    present. Used as a last-resort fallback before catalog-level date strings.
+    The caller signals the ambiguity via utc_source='exif_notz'.
+
+    Supports both PIL's 'YYYY:MM:DD HH:MM:SS' format and ISO variants.
+    Returns an ISO-8601 string with a 'Z' suffix even though the offset is
+    unknown — callers should treat the time as camera-local, not true UTC.
+    """
+    if not exif:
+        return None
+    dto = exif.get("DateTimeOriginal") or exif.get("DateTimeDigitized")
+    if not dto:
+        return None
+    # Normalise EXIF "YYYY:MM:DD HH:MM:SS" → ISO-8601
+    dto_str = str(dto).strip()
+    try:
+        dt = datetime.strptime(dto_str, "%Y:%m:%d %H:%M:%S")
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        pass
+    # Already ISO-ish (e.g. from some PIL paths)
+    try:
+        dt = datetime.fromisoformat(dto_str.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+
+
 def _exif_copy_to_utc(exif: dict) -> str | None:
     """Derive true UTC from a per-copy EXIF payload (4a output).
 
@@ -157,6 +229,11 @@ def _exif_copy_to_utc(exif: dict) -> str | None:
     )
     if not offset:
         return None
+
+    # Override known-bad embedded offset tags.
+    serial = exif.get("BodySerialNumber") or exif.get("SerialNumber")
+    if serial and serial in CAMERA_OFFSET_CORRECTIONS:
+        offset = CAMERA_OFFSET_CORRECTIONS[serial]
 
     def _parse_offset(s: str) -> timezone | None:
         try:
@@ -337,7 +414,7 @@ def _seed_from_io(
             continue
         rec = records.setdefault(nid, LedgerRecord(nasa_id=nid))
         rec.title = doc.get("md_title", "") or rec.title
-        rec.description = (doc.get("description") or "")[:500] or rec.description
+        rec.description = _clean_description((doc.get("description") or "")[:500]) or rec.description
         rec.io = doc
         n += 1
     return n
@@ -416,7 +493,7 @@ def _add_nasa_images(
         if not rec.title:
             rec.title = item.get("title", "")
         if not rec.description:
-            rec.description = (item.get("description") or "")[:500]
+            rec.description = _clean_description((item.get("description") or "")[:500])
         # Stash a candidate date — the date chain will pick it up.
         rec.io.setdefault("_nasa_images_date", item.get("date_taken") or item.get("date_created"))
         path = files.get(nasa_id)
@@ -561,7 +638,9 @@ def _resolve_date(
     Priority (highest first):
       1. exif_offset    — UTC derived from each copy's DateTimeOriginal +
                           OffsetTime* (computed on the fly — see
-                          _exif_copy_to_utc)
+                          _exif_copy_to_utc). Embedded offset is substituted
+                          with the known-correct one for cameras in
+                          CAMERA_OFFSET_CORRECTIONS.
       2. io_nhq         — second-precision date from io_nhq_photos_found.jsonl
       3. io_exif        — IO-scraped per-photo EXIF (DateCreated /
                           DigitalCreationTime / DateTimeOriginal+offset).
@@ -569,6 +648,10 @@ def _resolve_date(
       4. io_corrected   — IO md_creation_date with TZ correction applied
       5. io_onboard     — onboard-camera UTC from photo-datetime-overrides.json,
                           or IO md_creation_date for art002e/a prefixes
+      5a. exif_notz     — DateTimeOriginal from the copy EXIF without an offset
+                          tag. Camera-local time, not true UTC; better than a
+                          day-level catalog date for photos absent from IO
+                          (e.g. afrc/nhq ground shots not in the IO database).
       6. flickr         — Flickr datetaken (TZ-corrected if we have an offset)
       7. nasa_images    — date_created / date_taken from images.nasa.gov
       8. eol            — dateTaken from EOL JSON
@@ -630,7 +713,22 @@ def _resolve_date(
         rec.utc_source = "io_onboard"
         return
 
-    # 5. Flickr datetaken
+    # 5a. Best-effort: DateTimeOriginal from copy EXIF without an offset tag.
+    # Covers ground-photographer shots (e.g. afrc prefix) that are published
+    # on images.nasa.gov but absent from the IO database, so the IO-based
+    # steps all miss. Camera-local time is still far more useful for timeline
+    # placement than a bare catalog date at 00:00:00 UTC.
+    for source in ("raw_crew", "eol", "flickr", "nasa_images", "ia_stills", "manual"):
+        copy = rec.copies.get(source)
+        if not copy or not copy.exif:
+            continue
+        utc = _exif_copy_dto_raw(copy.exif)
+        if utc:
+            rec.utc = utc
+            rec.utc_source = "exif_notz"
+            return
+
+    # 6. Flickr datetaken
     flickr_dt = (rec.io or {}).get("_flickr_datetaken")
     if flickr_dt:
         utc = _flickr_datetaken_to_utc(flickr_dt, offset)
@@ -639,14 +737,14 @@ def _resolve_date(
             rec.utc_source = "flickr"
             return
 
-    # 6. images.nasa.gov
+    # 7. images.nasa.gov
     nasa_date = (rec.io or {}).get("_nasa_images_date")
     if nasa_date:
         rec.utc = nasa_date
         rec.utc_source = "nasa_images"
         return
 
-    # 7. EOL fallback
+    # 8. EOL fallback
     eol_dt = (rec.io or {}).get("_eol_dateTaken")
     if eol_dt:
         rec.utc = eol_dt

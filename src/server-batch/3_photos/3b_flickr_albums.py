@@ -43,14 +43,14 @@ def fetch_albums(mission: MissionConfig) -> None:
 
     out_path = mission.raw_photos_flickr / "album_metadata.json"
 
+    # Load previously fetched photos so we can merge rather than replace.
+    # This allows incremental runs to pick up photos added to albums after
+    # the initial fetch without re-downloading everything.
+    prior: dict[str, dict] = {}
     if out_path.exists():
         with open(out_path, "r", encoding="utf-8") as f:
-            existing = json.load(f)
-        print(
-            f"  Already fetched: {len(existing)} photos. "
-            f"Delete {out_path} to re-fetch."
-        )
-        return
+            prior = {p["id"]: p for p in json.load(f) if p.get("id")}
+        print(f"  Loaded {len(prior)} previously fetched photos.")
 
     # merged dict: flickr photo id → photo record (first album wins on conflict)
     merged: dict[str, dict] = {}
@@ -91,14 +91,23 @@ def fetch_albums(mission: MissionConfig) -> None:
             "duplicates_with_prior_albums": duplicates_this_album,
         })
 
-    result = list(merged.values())
+    # Merge freshly-fetched records with anything from a prior run.
+    # prior entries not seen in the latest API response are kept (they
+    # may have been removed from the album temporarily but we still hold
+    # the original download — better to keep than silently drop).
+    # New entries (not in prior) are the incremental additions.
+    new_ids = set(merged) - set(prior)
+    combined = {**prior, **merged}   # API response wins on key collision
+    result = list(combined.values())
     unique_count = len(result)
-    duplicate_count = total_fetched - unique_count
+    duplicate_count = total_fetched - len(merged)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
     print(f"\n  Merged output: {unique_count} unique photos → {out_path}")
+    if new_ids:
+        print(f"  New photos since last run: {len(new_ids)}")
     if duplicate_count:
         print(f"  Duplicates removed: {duplicate_count}")
 
@@ -107,6 +116,7 @@ def fetch_albums(mission: MissionConfig) -> None:
         "albums": audit_albums,
         "total_fetched": total_fetched,
         "unique_count": unique_count,
+        "new_since_last_run": len(new_ids),
         "duplicate_count": duplicate_count,
     }
     audit_path = mission.raw_photos_flickr / "album_metadata_sources.json"

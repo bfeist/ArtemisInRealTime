@@ -59,6 +59,11 @@ IO_EXIF_JSONL = "io_photo_exif.jsonl"
 CAMERA_TZ = {
     "3023828": "-06:00",  # David DeHoyos — NIKON Z 9 (CST, missed DST switch)
     "3035041": "-06:00",  # Luna Posadas Nava — NIKON Z 9 (CST, missed DST switch)
+    # Canon EOS 7D Mark II, NASA/Bill Ingalls (NHQ). Camera was at KSC for the
+    # Artemis II launch. The clock was ~1 h ahead of local EDT and the embedded
+    # OffsetTimeOriginal read +05:00 — both wrong. Cross-referenced against
+    # concurrent JSC crew launch photos: camera local 18:35 + 3 h = 21:35 UTC.
+    "652057000325": "-03:00",
 }
 
 # Default timezone for each nasa_id prefix. Applied to photos where we have
@@ -195,9 +200,14 @@ def generate_overrides(metadata: list[dict]) -> dict[str, str]:
             stats["skipped"] += 1
             continue
 
-        # Priority 1: scraped tz_offset from EXIF
+        # Priority 1: scraped tz_offset from EXIF, unless the camera serial
+        # is in CAMERA_TZ (meaning its embedded offset is known to be wrong).
         actual_tz = photo.get("tz_offset")
         source = "exif"
+        serial = get_serial(photo.get("exif"))
+        if actual_tz and serial and serial in CAMERA_TZ:
+            # Camera is in the correction list — don't trust the scraped offset.
+            actual_tz = None
 
         # Priority 2: camera serial → CAMERA_TZ mapping
         if not actual_tz:

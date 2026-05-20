@@ -12,9 +12,17 @@ const DATE_SOURCE_TONE: Record<DateSource, string> = {
   io_exif: styles.toneGreen,
   io_corrected: styles.toneYellow,
   io_onboard: styles.toneYellow,
+  exif_notz: styles.toneOrange,
   flickr: styles.toneOrange,
   nasa_images: styles.toneOrange,
 };
+
+// Photos whose date is at midnight UTC have only day-level precision —
+// they're placed at 00:00:00 and look wrong on any time-based timeline.
+function isMidnightUtc(iso: string): boolean {
+  const d = new Date(iso);
+  return d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0;
+}
 
 const DATE_SOURCE_LABEL: Record<DateSource, string> = {
   exif_offset: "EXIF OffsetTimeOriginal (camera-set timezone)",
@@ -22,6 +30,7 @@ const DATE_SOURCE_LABEL: Record<DateSource, string> = {
   io_exif: "Image Online — scraped EXIF (DateCreated / DigitalCreationTime)",
   io_corrected: "Image Online — corrected timestamp",
   io_onboard: "Image Online — onboard timestamp",
+  exif_notz: "EXIF DateTimeOriginal (camera-local, no UTC offset)",
   flickr: "Flickr metadata",
   nasa_images: "NASA Images metadata",
 };
@@ -52,6 +61,7 @@ function PhotoTest(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [hideQuestionable, setHideQuestionable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,10 +100,15 @@ function PhotoTest(): JSX.Element {
     return m;
   }, [photos]);
 
+  const visiblePhotos = useMemo(
+    () => (hideQuestionable ? photos.filter((p) => !isMidnightUtc(p.date)) : photos),
+    [photos, hideQuestionable]
+  );
+
   const groups: FdGroup[] = useMemo(() => {
     const out: FdGroup[] = [];
     let cur: FdGroup | null = null;
-    for (const p of photos) {
+    for (const p of visiblePhotos) {
       const fd = flightDay(p.date);
       if (!cur || cur.fd !== fd) {
         cur = { fd, photos: [] };
@@ -102,25 +117,27 @@ function PhotoTest(): JSX.Element {
       cur.photos.push(p);
     }
     return out;
-  }, [photos]);
+  }, [visiblePhotos]);
+
+  const midnightCount = useMemo(() => photos.filter((p) => isMidnightUtc(p.date)).length, [photos]);
 
   const stats = useMemo(() => {
     const dateBreakdown: Record<string, number> = {};
     const sourceBreakdown: Record<string, number> = {};
     let bracketHeroCount = 0;
-    for (const p of photos) {
+    for (const p of visiblePhotos) {
       dateBreakdown[p.dateSource] = (dateBreakdown[p.dateSource] ?? 0) + 1;
       for (const s of p.exportedIn) sourceBreakdown[s] = (sourceBreakdown[s] ?? 0) + 1;
       if (p.bracketSetId) bracketHeroCount++;
     }
     return {
-      total: photos.length,
+      total: visiblePhotos.length,
       bracketSets: brackets ? Object.keys(brackets).length : 0,
       bracketHeroCount,
       dateBreakdown,
       sourceBreakdown,
     };
-  }, [photos, brackets]);
+  }, [visiblePhotos, brackets]);
 
   const active = activeId ? photosById[activeId] : null;
 
@@ -130,6 +147,17 @@ function PhotoTest(): JSX.Element {
 
       {loading && <p className={styles.status}>Loading…</p>}
       {error && <p className={styles.status}>Error: {error}</p>}
+
+      {!loading && !error && (
+        <label className={styles.toggleRow}>
+          <input
+            type="checkbox"
+            checked={hideQuestionable}
+            onChange={(e) => setHideQuestionable(e.target.checked)}
+          />
+          Hide photos with no intraday time ({midnightCount} photos — day-precision only)
+        </label>
+      )}
 
       {!loading && !error && (
         <div className={styles.statsStrip}>
