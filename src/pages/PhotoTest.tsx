@@ -4,7 +4,6 @@ import PhotoDetail from "./PhotoDetail.tsx";
 import type { BracketsIndex, DateSource, ExportSource, Photo } from "../types/photos.ts";
 
 const ASSETS_BASE = import.meta.env.DEV ? "/artemis-assets" : "https://media.artemisinrealtime.org";
-const MISSION_START_UTC = Date.UTC(2026, 2, 31); // 2026-03-31
 
 const DATE_SOURCE_TONE: Record<DateSource, string> = {
   exif_offset: styles.toneGreen,
@@ -42,16 +41,22 @@ const EXPORT_SOURCE_LABEL: Record<ExportSource, string> = {
   ia_stills: "Internet Archive — stills",
 };
 
-function flightDay(iso: string): string {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "FD-??";
-  const days = Math.floor((t - MISSION_START_UTC) / 86400000) + 1;
-  if (days < 0) return "Pre-launch";
-  return `FD-${String(days).padStart(2, "0")}`;
+function calendarDate(iso: string): string {
+  // Returns the UTC calendar date (YYYY-MM-DD) used as the group key.
+  return iso.slice(0, 10);
 }
 
-interface FdGroup {
-  fd: string;
+function formatDateHeading(ymd: string): string {
+  return new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+interface DateGroup {
+  date: string;
   photos: Photo[];
 }
 
@@ -105,13 +110,13 @@ function PhotoTest(): JSX.Element {
     [photos, hideQuestionable]
   );
 
-  const groups: FdGroup[] = useMemo(() => {
-    const out: FdGroup[] = [];
-    let cur: FdGroup | null = null;
+  const groups: DateGroup[] = useMemo(() => {
+    const out: DateGroup[] = [];
+    let cur: DateGroup | null = null;
     for (const p of visiblePhotos) {
-      const fd = flightDay(p.date);
-      if (!cur || cur.fd !== fd) {
-        cur = { fd, photos: [] };
+      const date = calendarDate(p.date);
+      if (!cur || cur.date !== date) {
+        cur = { date, photos: [] };
         out.push(cur);
       }
       cur.photos.push(p);
@@ -200,9 +205,10 @@ function PhotoTest(): JSX.Element {
       )}
 
       {groups.map((group) => (
-        <section key={group.fd} className={styles.fdSection}>
+        <section key={group.date} className={styles.fdSection}>
           <h2 className={styles.fdHeading}>
-            {group.fd} <span className={styles.fdCount}>({group.photos.length})</span>
+            {formatDateHeading(group.date)}{" "}
+            <span className={styles.fdCount}>({group.photos.length})</span>
           </h2>
           <div className={styles.grid}>
             {group.photos.map((photo) => (
