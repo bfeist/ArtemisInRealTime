@@ -66,7 +66,7 @@ function PhotoTest(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [hideQuestionable, setHideQuestionable] = useState(false);
+  const [hideQuestionable, setHideQuestionable] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
