@@ -77,7 +77,7 @@ STEPS = [
     ("5a", "5_trajectory.5a_orion_track",     "Build canonical Orion track from OEM/Horizons", None),
     ("5b", "5_trajectory.5b_moon_ephemeris",  "Compute geocentric Moon at every Orion sample", None),
     ("5c", "5_trajectory.5c_web_trajectory",  "Emit web/ephemeris/trajectory.json", None),
-    ("5d", "5_trajectory.5d_web_itinerary",   "Emit web/ephemeris/itinerary.json",  None),
+    ("6a", "6_itinerary.6a_web_itinerary",   "Emit web/itinerary.json",  None),
 ]
 
 

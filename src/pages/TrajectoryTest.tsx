@@ -1,5 +1,5 @@
 import { JSX, useEffect, useMemo, useRef, useState } from "react";
-import brightStarsRaw from "../public/bright-stars.json";
+import brightStarsRaw from "../data/bright-stars.json";
 import styles from "./TrajectoryTest.module.css";
 
 const ASSETS_BASE = import.meta.env.DEV ? "/artemis-assets" : "https://media.artemisinrealtime.org";

@@ -1,4 +1,4 @@
-"""5d_web_itinerary.py — Build web/ephemeris/itinerary.json
+"""6a_web_itinerary.py — Build web/itinerary.json
 
 Sources
 -------
@@ -11,7 +11,7 @@ As-flown confirmations from NASA Artemis blog posts (April 2026):
 
 Usage
 -----
-    uv run 5d_web_itinerary.py --mission artemis-ii
+    uv run 6_itinerary/6a_web_itinerary.py --mission artemis-ii
 """
 
 import argparse
@@ -272,14 +272,14 @@ def build_itinerary(mission_id: str) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build web/ephemeris/itinerary.json")
+    parser = argparse.ArgumentParser(description="Build web/itinerary.json")
     parser.add_argument("--mission", required=True, choices=list(MISSIONS.keys()))
     args = parser.parse_args()
 
     mission = MISSIONS[args.mission]
     data = build_itinerary(args.mission)
 
-    out_path = mission.web_ephemeris / "itinerary.json"
+    out_path = mission.web_dir / "itinerary.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     print(f"Wrote {len(data['events'])} events → {out_path} ({out_path.stat().st_size:,} bytes)")

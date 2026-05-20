@@ -32,7 +32,7 @@ from pathlib import Path
 
 MAG_LIMIT = 6.0   # apparent magnitude ceiling  (5 000 + stars visible to naked eye)
 
-OUTPUT_PATH = Path(__file__).resolve().parent.parent / "public" / "bright-stars.json"
+OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "bright-stars.json"
 
 # Primary: d3-celestial – pre-processed GeoJSON, not in LFS, BSD 3-Clause
 D3_STARS_URL = (

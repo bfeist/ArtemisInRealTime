@@ -158,7 +158,12 @@ uv run run_all.py --mission artemis-ii --list
 | 5a   | Build canonical Orion track from OEM/Horizons | all      |
 | 5b   | Compute geocentric Moon at every Orion sample | all      |
 | 5c   | Emit web/ephemeris/trajectory.json            | all      |
-| 5d   | Emit web/ephemeris/itinerary.json             | all      |
+
+## Itinerary
+
+| Step | Description             | Missions |
+| ---- | ----------------------- | -------- |
+| 6a   | Emit web/itinerary.json | all      |
 
 ### Step groups
 
