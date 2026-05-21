@@ -67,14 +67,15 @@ uv run python -m 2_video.2e_yt_download        --mission artemis-ii
 uv run python -m 2_video.2g_web_video          --mission artemis-ii
 
 # Step 2h splits a downloaded MKV into 12-hour parts; step 2j transcribes them.
-# --stream-start-utc is optional on 2j — omit to transcribe first, then re-run
-# with --stream-start-utc --dedup-only once the stream start UTC is determined.
-uv run python -m 2_video.2h_split_mkv          --mission artemis-ii
-uv run python -m 2_video.2j_transcribe_yt      --mission artemis-ii \
+# Step 2k auto-detects the stream start UTC by matching speech against comm.json,
+# removes comm duplicates, and writes web/combined_transcript.json.
+uv run python -m 2_video.2h_split_mkv               --mission artemis-ii
+uv run python -m 2_video.2j_transcribe_yt           --mission artemis-ii \
     --input-dir "/path/to/yt_videos/artemis-ii"
-# Once stream start UTC is determined by comparing transcripts against comm:
-uv run python -m 2_video.2k_dedup_yt_comm      --mission artemis-ii \
-    --stream-start-utc "2026-03-30T12:00:00Z"
+uv run python -m 2_video.2k_filter_yt_transcript    --mission artemis-ii
+# Override auto-detected stream start if needed:
+# uv run python -m 2_video.2k_filter_yt_transcript  --mission artemis-ii \
+#     --stream-start-utc "2026-03-30T12:00:00Z"
 
 uv run python -m 1_comm.1a_download_ia_zips    --mission artemis-ii
 uv run python -m 1_comm.1b_transcribe          --mission artemis-ii

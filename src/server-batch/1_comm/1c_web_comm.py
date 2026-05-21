@@ -1,12 +1,18 @@
-"""Step 1c — Produce web-ready comm JSON from transcripts.
+"""Step 1c — Produce web-ready comm CSV from transcripts.
 
-Reads per-file transcript JSONs and produces a single comm.json and
-a pipe-delimited _transcript.csv for the web frontend, sorted
-chronologically. AAC files are written directly to web/comm/ by step 1b.
+Reads per-file transcript JSONs and produces a single pipe-delimited
+comm.csv for the web frontend, sorted chronologically.
+AAC files are written directly to web/comm/ by step 1b.
+
+Output columns: t|s|d|src|text
+  t   — ISO-8601 UTC timestamp of the segment
+  s   — segment start offset (seconds) within the AAC file
+  d   — segment duration (seconds)
+  src — AAC filename (relative to web/comm/)
+  text — transcript text
 
 Input:  {data_dir}/{mission}/processed/transcripts/comm/{date}/*.json
-Output: {data_dir}/{mission}/web/comm.json
-        {data_dir}/{mission}/web/comm/_transcript.csv
+Output: {data_dir}/{mission}/web/comm.csv
 """
 
 import argparse
@@ -49,14 +55,25 @@ def build_web_comm(mission: MissionConfig) -> None:
         return
 
     # Collect all transcript JSONs, building comm entries and CSV rows
-    transcripts = []
-    csv_rows = []       # (utc_time, aac_name, start, end, lang, text) tuples
+    transcripts = []  # list of (t, s, d, src, text) tuples for comm.csv
+
+    # Hours to add to convert filename-embedded local time → UTC.
+    # Applied only to JSONs produced by the old 1b code that did not apply the
+    # correction itself (those lack the "tz_corrected": true marker).
+    tz_delta = timedelta(hours=mission.comm_tz_offset_hours)
 
     for json_path in sorted(transcript_dir.rglob("*.json")):
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        base_utc = data.get("utcTime", "")
+        raw_utc = data.get("utcTime", "")
+        # Apply timezone correction for pre-fix JSONs that have local time
+        # stored as if it were UTC (missing the tz_corrected flag).
+        if raw_utc and tz_delta and not data.get("tz_corrected"):
+            corrected = datetime.fromisoformat(raw_utc.replace("Z", "+00:00")) + tz_delta
+            base_utc = corrected.strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
+            base_utc = raw_utc
         source = data.get("source", json_path.stem)
         lang = data.get("language", "en")
         aac_name = json_path.stem + ".aac"
@@ -70,53 +87,31 @@ def build_web_comm(mission: MissionConfig) -> None:
             seg_end = seg.get("end", 0)
             seg_utc = _offset_utc(base_utc, seg_start) if base_utc else ""
 
-            entry = {
-                "t": seg_utc,
-                "s": round(seg_start, 3),
-                "d": round(seg_end - seg_start, 3),
-                "src": aac_name,
-                "text": text,
-                "lang": lang,
-            }
-            transcripts.append(entry)
-
-            csv_rows.append((
-                seg_utc[11:23],  # HH:MM:SS.mmm
+            transcripts.append((
+                seg_utc,
+                str(round(seg_start, 3)),
+                str(round(seg_end - seg_start, 3)),
                 aac_name,
-                str(seg_start),
-                str(seg_end),
-                lang,
                 text,
             ))
 
-    # Sort transcripts by UTC time (csv_rows are already in the same order since
-    # json files are walked sorted, but we re-sort to be safe)
-    order = sorted(range(len(transcripts)), key=lambda i: transcripts[i]["t"])
-    transcripts = [transcripts[i] for i in order]
-    csv_rows = [csv_rows[i] for i in order]
+    # Sort by UTC (column 0)
+    transcripts.sort(key=lambda r: r[0])
 
-    # Write comm.json
-    out_path = mission.web_dir / "comm.json"
+    # Write pipe-delimited comm.csv
+    out_path = mission.web_dir / "comm.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(transcripts, f, ensure_ascii=False)
+        for row in transcripts:
+            f.write("|".join(row) + "\n")
 
     print(f"  Saved {len(transcripts)} comm entries to {out_path}")
 
     # Stats
     if transcripts:
-        print(f"  Time range: {transcripts[0]['t']} to {transcripts[-1]['t']}")
-        total_dur = sum(t.get("d", 0) for t in transcripts)
+        print(f"  Time range: {transcripts[0][0]} to {transcripts[-1][0]}")
+        total_dur = sum(float(r[2]) for r in transcripts)
         print(f"  Total audio duration: {total_dur / 3600:.1f} hours")
-
-    # Write pipe-delimited _transcript.csv
-    comm_web_dir = mission.web_dir / "comm"
-    comm_web_dir.mkdir(parents=True, exist_ok=True)
-    transcript_path = comm_web_dir / "_transcript.csv"
-    with open(transcript_path, "w", encoding="utf-8") as f:
-        for row in csv_rows:
-            f.write("|".join(row) + "\n")
-    print(f"  Wrote {len(csv_rows)} rows to {transcript_path}")
 
 
 def main():

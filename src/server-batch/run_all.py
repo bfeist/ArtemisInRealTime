@@ -55,7 +55,8 @@ STEPS = [
     # ── 2h/2i — standalone scripts (no --mission arg); run directly via uv ───
     # uv run 2_video/2h_split_mkv.py --input "D:/..." --output-dir "D:/chunks"
     # uv run 2_video/2i_yt_upload.py --input-dir "D:/chunks"
-    ("2j", "2_video.2j_transcribe_yt", "Transcribe YT chunks, de-dup vs comm", {"artemis-ii"}),
+    ("2j", "2_video.2j_transcribe_yt",           "Transcribe YT chunks (WhisperX + diarization)", {"artemis-ii"}),
+    ("2k", "2_video.2k_filter_yt_transcript",     "Filter YT transcript; produce combined web transcript", {"artemis-ii"}),
     ("3a", "3_photos.3a_ia_stills_download", "Download IA stills", None),
     ("3a2", "3_photos.3a2_io_photo_catalog", "Scrape IO photo collections", None),
     ("3a3", "3_photos.3a3_io_exif_scrape", "Scrape IO EXIF for timezone corrections", None),

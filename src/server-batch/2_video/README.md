@@ -79,10 +79,19 @@
   │ Reads:           │   │  *_part*.mp4 (from 2h)           │
   │  *_part*.mp4     │   │  comm transcript (from 1b/1c)    │
   │ Saves: YouTube   │   │ Saves:                           │
-  │  video IDs in    │   │  processed/yt_transcript.json    │
-  │  .yt_upload_     │   │  (de-duped vs comm)              │
-  │  state.json      │   └──────────────────────────────────┘
-  └──────────────────┘
+  │  video IDs in    │   │  processed/transcripts/yt/       │
+  │  .yt_upload_     │   │  *.json (per chunk)              │
+  │  state.json      │   └────────────────┬─────────────────┘
+  └──────────────────┘                    │
+                                          ▼
+                               ┌──────────────────────────────────┐
+                               │ 2k — Filter YT Transcript        │
+                               │ Reads:                           │
+                               │  processed/transcripts/yt/*.json │
+                               │  web/comm.json (from 1c)         │
+                               │ Saves:                           │
+                               │  web/combined_transcript.json    │
+                               └──────────────────────────────────┘
 ```
 
 ## Step Details
@@ -177,6 +186,8 @@ Produces web-ready JSON from IA and YouTube metadata. IA timestamps come directl
 
 Splits a large MKV into YouTube-ready MP4 chunks using stream copy (default) or NVENC transcode (`--transcode`). Timestamps are reset to 0:00:00 per chunk and the moov atom is placed at the front (`faststart`) for fast YouTube ingest. Default chunk size is 8 hours.
 
+Each output part JSON (written by step 2j) includes a `duration` field that 2k reads to compute exact cumulative offsets — chunk size is not assumed to be uniform.
+
 ```bash
 uv run 2_video/2h_split_mkv.py --input "D:/NASA Artemis II Live Mission Coverage m3kR2KK8TEs.mkv"
 uv run 2_video/2h_split_mkv.py --input "D:/..." --output-dir "D:/chunks" --chunk-hours 8
@@ -193,7 +204,7 @@ uv run 2_video/2h_split_mkv.py --input "D:/..." --transcode   # VP9/Opus sources
 | **Requires**   | OAuth 2.0 credentials at `src/server-batch/client_secrets.json` (desktop app type) |
 | **Note**       | Standalone script — no `--mission` flag; run directly via `uv`                     |
 
-Uses the YouTube Data API v3 resumable upload endpoint. Each upload costs 1 600 API quota units; the default daily quota allows ~6 uploads/day. The OAuth token is cached at `~/.config/artemis-ingest/yt_token.json` after the first browser sign-in.
+Uses the YouTube Data API v3 resumable upload endpoint. Each upload costs 1,600 API quota units; the default daily quota allows ~6 uploads/day. The OAuth token is cached at `~/.config/artemis-ingest/yt_token.json` after the first browser sign-in.
 
 ```bash
 uv run 2_video/2i_yt_upload.py --input-dir "D:/chunks"             # unlisted (safe default)
@@ -203,19 +214,64 @@ uv run 2_video/2i_yt_upload.py --input-dir "D:/chunks" --dry-run  # preview with
 
 ### 2j: Transcribe YT Chunks (`2j_transcribe_yt.py`)
 
-|                |                                                                 |
-| -------------- | --------------------------------------------------------------- |
-| **Input**      | `*_part*.mp4` chunks (from 2h), comm transcript (from 1b/1c)    |
-| **Output**     | `processed/yt_transcript.json` (de-duplicated against comm)     |
-| **Idempotent** | Yes — skips parts already present in output                     |
-| **Requires**   | WhisperX, Pyannote (`speaker-diarization-3.1`), GPU recommended |
+|                |                                                                            |
+| -------------- | -------------------------------------------------------------------------- |
+| **Input**      | `*_part*.mp4` chunks (from 2h)                                             |
+| **Output**     | `processed/transcripts/yt/{stem}.json` per part (file-relative timestamps) |
+| **Idempotent** | Yes — skips parts whose JSON already exists                                |
+| **Requires**   | WhisperX, Pyannote (`speaker-diarization-3.1`), GPU recommended            |
 
-Runs WhisperX ASR + forced alignment + speaker diarization on each MP4 chunk, then de-duplicates against the comm transcript using a two-pass text+time / speaker-cluster algorithm. Utterances also present in the comm transcript are flagged so the frontend can suppress them from the integrated timeline.
+Runs WhisperX ASR + forced alignment + speaker diarization on each MP4 chunk. Saves one JSON per part containing file-relative segment timestamps, speaker labels, and a `duration` field (actual audio length in seconds). No UTC alignment is done here — run step 2k afterwards.
 
 ```bash
 uv run run_all.py --mission artemis-ii --step 2j
 # or directly:
 uv run python -m 2_video.2j_transcribe_yt --mission artemis-ii
+```
+
+### 2k: Filter YT Transcript (`2k_filter_yt_transcript.py`)
+
+|                |                                                                                  |
+| -------------- | -------------------------------------------------------------------------------- |
+| **Input**      | `processed/transcripts/yt/*.json` (from 2j), `web/comm.json` (from 1c)           |
+| **Output**     | `web/combined_transcript.json` (web), audit files in `processed/transcripts/yt/` |
+| **Idempotent** | Yes — overwrites outputs on each run                                             |
+| **Requires**   | `web/comm.json` from step 1c for dedup and stream start detection                |
+
+Determines when the YouTube stream began, removes utterances that duplicate the space-to-ground comm channel, and writes a combined timeline for the frontend.
+
+#### Stream start UTC
+
+The stream start UTC is the single most important calibration value — it sets the absolute UTC of every YT transcript segment. There are three ways to supply it, checked in this priority order:
+
+1. **`--stream-start-utc` CLI flag** — explicit override, takes precedence over everything.
+2. **`yt_stream_start_utc` in `config.py`** — mission-specific value set after calibration (see below). Used automatically when no CLI flag is given.
+3. **Auto-detection** — fallback when neither of the above is set. Samples up to 200 YT segments, fuzzy-matches them against all comm entries, and takes the consensus median of `comm_utc − yt_relative_seconds`. Accuracy is typically ±1s but can be biased a few seconds early due to WhisperX segment-start timing. Result is saved to `_stream_start.json` for inspection.
+
+**Artemis II calibration** (`yt_stream_start_utc = "2026-04-01T11:43:14.521Z"`):
+
+Derived statistically from 1,801 high-confidence text-match pairs in a tight ±2s coincidence window between comm and YT transcripts. The mean comm-minus-YT offset was **7.747 ± 0.020s** (1σ), giving a stream start of `11:43:06.774Z + 7.747s = 11:43:14.521Z`. This was cross-validated against the "booster ignition and liftoff" call heard at approximately 2:51:57.5 into Part 2 (absolute YT offset ≈ 39,117.5s from stream start), compared against the known launch UTC of 22:35:12Z — yielding an independent estimate of `11:43:14.500Z`, agreeing to within 21 ms.
+
+The WhisperX segment-start bias (~7.7s) is a known artefact of segment-level (not word-level) timestamps; the statistical method corrects for it automatically. The recording system PC clock was verified accurate to ~0.02s (no additional clock correction needed).
+
+#### De-duplication
+
+Two-pass process:
+
+1. **Text + time matching** — each YT utterance is compared against comm entries within a ±90s UTC window (fallback ±300s at score ≥ 90). Matches at `fuzz.ratio ≥ 75` are marked removed.
+2. **Speaker-cluster promotion** — for each diarization speaker ID, if ≥ 25% of their utterances matched comm (and they have ≥ 5 total), all remaining utterances by that speaker are also removed. Promotions with text similarity < 40 are flagged `low_confidence: true` in `_dedup_matches.json` for operator review.
+
+#### Combined output
+
+`web/combined_transcript.json` is a chronologically merged list of all comm entries (`"source": "comm"`) and surviving YT utterances (`"source": "yt"`). The `source` field allows the frontend to style and filter them independently.
+
+```bash
+uv run run_all.py --mission artemis-ii --step 2k
+# or directly:
+uv run python -m 2_video.2k_filter_yt_transcript --mission artemis-ii
+# Override stream start (e.g. for re-calibration):
+uv run python -m 2_video.2k_filter_yt_transcript --mission artemis-ii \
+    --stream-start-utc "2026-04-01T11:43:14.521Z"
 ```
 
 ## Dependency Order
@@ -237,12 +293,15 @@ uv run python -m 2_video.2j_transcribe_yt --mission artemis-ii
 
 2h ─────────────┬──▶ 2i (upload chunks to YouTube)
                 │
-                └──▶ 2j (transcribe + de-dup vs comm; also needs 1b/1c)
+                └──▶ 2j (transcribe; GPU required)
+                           │
+                           └──▶ 2k (filter comm dups; also needs 1b/1c output)
+                                    └──▶ web/combined_transcript.json
 ```
 
 **Minimum order**: `2a` → `2b` → `2f` + `2d` (parallel OK) → `2e` → `2g`
 
-**Upload sub-pipeline**: `2e` → `2h` → `2i` (upload) + `2j` (transcribe)
+**Upload sub-pipeline**: `2e` → `2h` → `2i` (upload) + `2j` (transcribe) → `2k` (filter + web output)
 
 ## How to Run
 
@@ -261,6 +320,7 @@ uv run run_all.py --mission artemis-ii --step 2d
 uv run run_all.py --mission artemis-ii --step 2e
 uv run run_all.py --mission artemis-ii --step 2g
 uv run run_all.py --mission artemis-ii --step 2j
+uv run run_all.py --mission artemis-ii --step 2k
 
 # Run steps directly via uv
 uv run python -m 2_video.2a_ia_video_discover --mission artemis-ii
@@ -270,6 +330,7 @@ uv run python -m 2_video.2d_yt_metadata --mission artemis-ii
 uv run python -m 2_video.2e_yt_download --mission artemis-ii
 uv run python -m 2_video.2g_web_video --mission artemis-ii
 uv run python -m 2_video.2j_transcribe_yt --mission artemis-ii
+uv run python -m 2_video.2k_filter_yt_transcript --mission artemis-ii
 
 # Standalone scripts (no --mission; run directly)
 uv run 2_video/2h_split_mkv.py --input "D:/NASA Artemis II Live Mission Coverage m3kR2KK8TEs.mkv"
@@ -284,15 +345,19 @@ uv run run_all.py --mission artemis-i --step 2a
 
 ## Assets Saved (What Can Be Skipped on Re-run)
 
-| File                                | Produced by | Consumed by    | Re-run cost              |
-| ----------------------------------- | ----------- | -------------- | ------------------------ |
-| `processed/ia_video_catalog.json`   | 2a          | 2b, 2f         | Low (API calls)          |
-| `raw/video/ia/*.mp4`                | 2b          | 2f, (frontend) | **High** (GB downloads)  |
-| `processed/ia_video_metadata.json`  | 2f          | 2g             | Low (IA metadata API)    |
-| `processed/yt_metadata.json`        | 2d          | 2e, 2g         | Low (YT API)             |
-| `YT_VIDEO_DIR/{mission}/*.mp4`      | 2e          | (frontend)     | **High** (GB downloads)  |
-| `web/videoIA.json`                  | 2g          | (frontend)     | Instant                  |
-| `web/videoYt.json`                  | 2g          | (frontend)     | Instant                  |
-| `{stem}_part*.mp4`                  | 2h          | 2i, 2j         | **High** (ffmpeg, hours) |
-| `{input_dir}/.yt_upload_state.json` | 2i          | (resume state) | **High** (YT quota days) |
-| `processed/yt_transcript.json`      | 2j          | (frontend)     | **High** (GPU hours)     |
+| File                                           | Produced by | Consumed by    | Re-run cost              |
+| ---------------------------------------------- | ----------- | -------------- | ------------------------ |
+| `processed/ia_video_catalog.json`              | 2a          | 2b, 2f         | Low (API calls)          |
+| `raw/video/ia/*.mp4`                           | 2b          | 2f, (frontend) | **High** (GB downloads)  |
+| `processed/ia_video_metadata.json`             | 2f          | 2g             | Low (IA metadata API)    |
+| `processed/yt_metadata.json`                   | 2d          | 2e, 2g         | Low (YT API)             |
+| `YT_VIDEO_DIR/{mission}/*.mp4`                 | 2e          | (frontend)     | **High** (GB downloads)  |
+| `web/videoIA.json`                             | 2g          | (frontend)     | Instant                  |
+| `web/videoYt.json`                             | 2g          | (frontend)     | Instant                  |
+| `{stem}_part*.mp4`                             | 2h          | 2i, 2j         | **High** (ffmpeg, hours) |
+| `{input_dir}/.yt_upload_state.json`            | 2i          | (resume state) | **High** (YT quota days) |
+| `processed/transcripts/yt/*.json`              | 2j          | 2k             | **High** (GPU hours)     |
+| `web/combined_transcript.json`                 | 2k          | (frontend)     | Fast (CPU only)          |
+| `processed/transcripts/yt/_stream_start.json`  | 2k          | (audit/re-run) | Fast (CPU only)          |
+| `processed/transcripts/yt/_dedup_matches.json` | 2k          | (audit)        | Fast (CPU only)          |
+| `processed/transcripts/yt/_comm_speakers.json` | 2k          | (audit)        | Fast (CPU only)          |

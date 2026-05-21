@@ -86,6 +86,17 @@ class MissionConfig:
     launch_utc: str | None = None
     splashdown_utc: str | None = None
 
+    # Hours to ADD to comm WAV filename timestamps to convert them to UTC.
+    # The Internet Archive comm recordings are timestamped in the local
+    # timezone of the recording system (NASA JSC = CT).  Set to 5.0 for
+    # missions recorded during CDT (UTC-5), 6.0 for CST (UTC-6).
+    comm_tz_offset_hours: float = 0.0
+
+    # Precise UTC start of the YouTube live stream, used by step 2k to assign
+    # absolute UTC to each YT transcript segment.  If None, 2k will
+    # auto-detect from text matching against comm entries.
+    yt_stream_start_utc: str | None = None
+
     # ── derived paths ─────────────────────────────────────────────────────
 
     @property
@@ -326,6 +337,13 @@ MISSIONS: dict[str, MissionConfig] = {
         horizons_id="-1024",
         launch_utc="2026-04-01T22:35:12Z",
         splashdown_utc="2026-04-11T00:07:00Z",
+        comm_tz_offset_hours=5.0,  # recordings timestamped in CDT (UTC-5)
+        # Derived statistically from 1,801 tight text-match pairs (±2s window)
+        # between comm and YT transcripts: mean offset = 7.747s, stderr = 0.020s.
+        # Cross-validated against "booster ignition" spoken at ~02:51:57.5 into
+        # Part 2 (yt_abs_s ≈ 39117.5s) and launch_utc = 22:35:12Z, which gives
+        # 11:43:14.500Z — agreement within 0.021s.  Use the statistical value.
+        yt_stream_start_utc="2026-04-01T11:43:14.521Z",
     ),
 }
 

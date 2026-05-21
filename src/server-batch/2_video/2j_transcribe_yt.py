@@ -8,8 +8,9 @@ file-relative timestamps only.  No UTC is needed here — one reason to
 transcribe first is to DETERMINE the stream start UTC by comparing speech
 against the comm transcript.
 
-Once the stream start UTC is known, run step 2k (2k_dedup_yt_comm.py) to
-align the transcripts to absolute UTC and de-duplicate against the comm feed.
+Once transcription is done, run step 2k (2k_filter_yt_transcript.py) to
+auto-detect the stream start UTC (by matching speech against comm.json),
+remove comm duplicates, and produce the combined web transcript.
 
 ─── Processing mode ──────────────────────────────────────────────────────────
 Default (full-file, diarization enabled):

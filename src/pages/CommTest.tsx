@@ -3,7 +3,7 @@ import styles from "./CommTest.module.css";
 
 const ASSETS_BASE = import.meta.env.DEV ? "/artemis-assets" : "https://media.artemisinrealtime.org";
 
-// ── Data shape produced by 1c_web_comm.py ────────────────────────────────────
+// ── Data shapes produced by 1c / 2k ────────────────────────────────────────
 
 interface CommSegment {
   s: number;
@@ -20,6 +20,13 @@ interface CommEntry {
   lang: string;
   segments?: CommSegment[];
 }
+
+interface PaoEntry {
+  t: string;
+  text: string;
+}
+
+type Row = { kind: "comm"; entry: CommEntry } | { kind: "pao"; entry: PaoEntry };
 
 // ── Channel helpers ───────────────────────────────────────────────────────────
 
@@ -58,19 +65,20 @@ function segmentStart(entry: CommEntry): number {
   return offset >= 0 ? offset : 0;
 }
 
-const MISSION_START_UTC = Date.UTC(2026, 2, 31); // 2026-03-31
-
-function flightDay(isoStr: string): string {
+function groupDate(isoStr: string): string {
   const t = Date.parse(isoStr);
-  if (Number.isNaN(t)) return "FD-??";
-  const days = Math.floor((t - MISSION_START_UTC) / 86400000) + 1;
-  if (days < 0) return "Pre-launch";
-  return `FD-${String(days).padStart(2, "0")}`;
+  if (Number.isNaN(t)) return "Unknown date";
+  return new Date(t).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 interface FdGroup {
-  fd: string;
-  entries: CommEntry[];
+  date: string;
+  rows: Row[];
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -79,6 +87,7 @@ const CHANNELS: ChannelId[] = ["OE-1", "OE-2"];
 
 function CommTest(): JSX.Element {
   const [entries, setEntries] = useState<CommEntry[]>([]);
+  const [paoEntries, setPaoEntries] = useState<PaoEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -87,6 +96,7 @@ function CommTest(): JSX.Element {
     "OE-2": true,
     unknown: true,
   });
+  const [showPao, setShowPao] = useState(true);
 
   const [activeEntry, setActiveEntry] = useState<CommEntry | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -119,26 +129,46 @@ function CommTest(): JSX.Element {
     const base = `${ASSETS_BASE}/artemis-ii/web`;
 
     Promise.all([
-      fetch(`${base}/comm.json`).then((r) => {
-        if (!r.ok) throw new Error(`comm.json HTTP ${r.status}`);
-        return r.json() as Promise<CommEntry[]>;
+      fetch(`${base}/comm.csv`).then((r) => {
+        if (!r.ok) throw new Error(`comm.csv HTTP ${r.status}`);
+        return r.text();
       }),
-      // CSV is pipe-delimited: HH:MM:SS | aac_name | start | end | lang | text
-      // Generated in sync with comm.json, so rows align by index.
-      fetch(`${base}/comm/_transcript.csv`).then((r) => (r.ok ? r.text() : Promise.resolve(""))),
+      fetch(`${base}/PAO.csv`).then((r) => (r.ok ? r.text() : Promise.resolve(""))),
     ])
-      .then(([entries, csv]) => {
+      .then(([commCsv, paoCsv]) => {
         if (cancelled) return;
 
-        // Build src array from CSV column 1 (aac filename)
-        const srcs: string[] = csv
-          .split("\n")
-          .map((line) => line.split("|")[1]?.replace(/\r$/, "").trim() ?? "");
+        // comm.csv is pipe-delimited: t|s|d|src|text
+        // text is last so it may safely contain "|"
+        const enriched: CommEntry[] = [];
+        for (const line of commCsv.split("\n")) {
+          const trimmed = line.replace(/\r$/, "");
+          if (!trimmed) continue;
+          const idx1 = trimmed.indexOf("|");
+          const idx2 = trimmed.indexOf("|", idx1 + 1);
+          const idx3 = trimmed.indexOf("|", idx2 + 1);
+          const idx4 = trimmed.indexOf("|", idx3 + 1);
+          if (idx4 === -1) continue;
+          const t = trimmed.slice(0, idx1);
+          const s = parseFloat(trimmed.slice(idx1 + 1, idx2));
+          const d = parseFloat(trimmed.slice(idx2 + 1, idx3));
+          const src = trimmed.slice(idx3 + 1, idx4);
+          const text = trimmed.slice(idx4 + 1);
+          enriched.push({ t, s, d, src, text, lang: "en" });
+        }
 
-        // Enrich entries that don't already have src
-        const enriched = entries.map((e, i) => (e.src ? e : { ...e, src: srcs[i] ?? "" }));
+        // PAO.csv is pipe-delimited: t|text
+        const paoList: PaoEntry[] = [];
+        for (const line of paoCsv.split("\n")) {
+          const trimmed = line.replace(/\r$/, "");
+          if (!trimmed) continue;
+          const idx = trimmed.indexOf("|");
+          if (idx === -1) continue;
+          paoList.push({ t: trimmed.slice(0, idx), text: trimmed.slice(idx + 1) });
+        }
 
         setEntries(enriched);
+        setPaoEntries(paoList);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -162,24 +192,31 @@ function CommTest(): JSX.Element {
     return counts;
   }, [entries]);
 
-  const filtered = useMemo(
-    () => entries.filter((e) => visible[channelFromSrc(e.src)]),
-    [entries, visible]
-  );
+  const merged = useMemo(() => {
+    const commRows: Row[] = entries
+      .filter((e) => visible[channelFromSrc(e.src)])
+      .map((e) => ({ kind: "comm" as const, entry: e }));
+    const paoRows: Row[] = showPao
+      ? paoEntries.map((e) => ({ kind: "pao" as const, entry: e }))
+      : [];
+    const all = [...commRows, ...paoRows];
+    all.sort((a, b) => (a.entry.t < b.entry.t ? -1 : a.entry.t > b.entry.t ? 1 : 0));
+    return all;
+  }, [entries, paoEntries, visible, showPao]);
 
   const groups = useMemo(() => {
     const out: FdGroup[] = [];
     let cur: FdGroup | null = null;
-    for (const e of filtered) {
-      const fd = flightDay(e.t);
-      if (!cur || cur.fd !== fd) {
-        cur = { fd, entries: [] };
+    for (const row of merged) {
+      const date = groupDate(row.entry.t);
+      if (!cur || cur.date !== date) {
+        cur = { date, rows: [] };
         out.push(cur);
       }
-      cur.entries.push(e);
+      cur.rows.push(row);
     }
     return out;
-  }, [filtered]);
+  }, [merged]);
 
   const timeRange = useMemo(() => {
     if (entries.length === 0) return null;
@@ -233,7 +270,7 @@ function CommTest(): JSX.Element {
         </div>
       )}
 
-      {loading && <p className={styles.status}>Loading comm.json…</p>}
+      {loading && <p className={styles.status}>Loading comm.csv…</p>}
       {error && <p className={styles.status}>Error: {error}</p>}
 
       {!loading && !error && (
@@ -250,6 +287,10 @@ function CommTest(): JSX.Element {
                 <div className={styles.statLabel}>{ch} entries</div>
               </div>
             ))}
+            <div className={styles.statCard}>
+              <div className={styles.statBig}>{paoEntries.length.toLocaleString()}</div>
+              <div className={styles.statLabel}>PAO entries</div>
+            </div>
             {timeRange && (
               <div className={styles.statCard}>
                 <div className={styles.statLabel}>time range (UTC)</div>
@@ -283,22 +324,48 @@ function CommTest(): JSX.Element {
                 {ch}
               </div>
             ))}
+            <div
+              className={`${styles.toggle} ${showPao ? styles.togglePaoActive : styles.togglePaoInactive}`}
+              role="button"
+              tabIndex={0}
+              aria-pressed={showPao}
+              aria-label={`Toggle PAO commentary ${showPao ? "off" : "on"}`}
+              onClick={() => setShowPao((v) => !v)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setShowPao((v) => !v);
+                }
+              }}
+            >
+              PAO
+            </div>
             <span className={styles.toggleLabel} style={{ marginLeft: "0.5rem" }}>
-              {filtered.length.toLocaleString()} shown
+              {merged.length.toLocaleString()} shown
             </span>
           </div>
 
           {/* Transcript list */}
           <div className={styles.list}>
-            {filtered.length === 0 && (
-              <div className={styles.empty}>No entries match the selected channels.</div>
+            {merged.length === 0 && (
+              <div className={styles.empty}>No entries match the selected filters.</div>
             )}
             {groups.map((group) => (
-              <section key={group.fd} className={styles.fdSection}>
+              <section key={group.date} className={styles.fdSection}>
                 <h2 className={styles.fdHeading}>
-                  {group.fd} <span className={styles.fdCount}>({group.entries.length})</span>
+                  {group.date} <span className={styles.fdCount}>({group.rows.length})</span>
                 </h2>
-                {group.entries.map((entry, i) => {
+                {group.rows.map((row, i) => {
+                  if (row.kind === "pao") {
+                    return (
+                      <div key={`pao-${row.entry.t}`} className={styles.entryPao}>
+                        <div className={styles.time}>{formatTime(row.entry.t)}</div>
+                        <div className={`${styles.channel} ${styles.channelPao}`}>PAO</div>
+                        <div className={styles.text}>{row.entry.text}</div>
+                      </div>
+                    );
+                  }
+                  const entry = row.entry;
                   const ch = channelFromSrc(entry.src);
                   const isActive = activeEntry === entry;
                   return (

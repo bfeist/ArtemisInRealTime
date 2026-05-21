@@ -121,26 +121,31 @@ def load_wav_audio(wav_path: Path, target_sr: int = WHISPERX_SAMPLE_RATE) -> np.
     return audio
 
 
-def parse_wav_timestamp(filename: str) -> dt.datetime | None:
-    """Extract UTC timestamp from WAV filename."""
+def parse_wav_timestamp(filename: str, tz_offset_hours: float = 0.0) -> dt.datetime | None:
+    """Extract UTC timestamp from WAV filename.
+
+    The archive WAV filenames carry the local time of the recording system
+    (NASA JSC = CT).  Pass ``tz_offset_hours`` (hours to ADD) to convert
+    that local time to UTC.  For CDT (UTC-5) use 5.0; for CST (UTC-6) use 6.0.
+    """
     m = WAV_PATTERN.match(filename)
     if not m:
         return None
-    return dt.datetime(
+    naive = dt.datetime(
         int(m.group("year")), int(m.group("month")), int(m.group("day")),
         int(m.group("hour")), int(m.group("minute")), int(m.group("second")),
-        tzinfo=dt.timezone.utc,
     )
+    return (naive + dt.timedelta(hours=tz_offset_hours)).replace(tzinfo=dt.timezone.utc)
 
 
-def collect_wav_files(comm_dir: Path) -> list[tuple[Path, dt.datetime]]:
+def collect_wav_files(comm_dir: Path, tz_offset_hours: float = 0.0) -> list[tuple[Path, dt.datetime]]:
     """Collect all WAV files with parsed timestamps, sorted chronologically."""
     results = []
     for dirpath, _dirs, files in os.walk(comm_dir):
         for f in files:
             if not f.lower().endswith(".wav"):
                 continue
-            ts = parse_wav_timestamp(f)
+            ts = parse_wav_timestamp(f, tz_offset_hours)
             if ts is None:
                 continue
             results.append((Path(dirpath) / f, ts))
@@ -191,6 +196,7 @@ def transcribe_wav(
         "version": 1,
         "source": str(wav_path.name),
         "utcTime": utc_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "tz_corrected": True,  # utcTime is genuine UTC (tz offset applied by 1b)
         "duration": round(duration, 2),
         "language": language,
         "model": "large-v3",
@@ -296,7 +302,7 @@ def transcribe_comm(
         print(f"  Comm directory not found: {comm_dir}")
         return
 
-    wav_files = collect_wav_files(comm_dir)
+    wav_files = collect_wav_files(comm_dir, tz_offset_hours=mission.comm_tz_offset_hours)
     if not wav_files:
         print(f"  No WAV files found in {comm_dir}")
         return
