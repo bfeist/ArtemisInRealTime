@@ -1,0 +1,42 @@
+/* TrajectoryTest2 — only overrides for the 3D banner; everything else is
+   imported from TrajectoryTest.module.css via composes. */
+
+.canvasWrap3d {
+  position: relative;
+  background: #03060c;
+  border: 1px solid #1f3052;
+  border-radius: 4px;
+  overflow: hidden;
+  width: calc(100% + 3rem);
+  margin-left: -1.5rem;
+  height: 200px;
+  margin-bottom: 0.75rem;
+}
+
+.canvasHint {
+  position: absolute;
+  bottom: 0.5rem;
+  right: 0.75rem;
+  font-size: 0.65rem;
+  color: #4c668c;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.canvasBadge {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.75rem;
+  font-size: 0.65rem;
+  color: #6e9aff;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  pointer-events: none;
+  z-index: 2;
+  background: rgb(10 18 34 / 60%);
+  padding: 0.15rem 0.4rem;
+  border: 1px solid #1f3052;
+  border-radius: 3px;
+}

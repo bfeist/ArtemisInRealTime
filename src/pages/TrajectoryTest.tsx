@@ -261,34 +261,32 @@ function TrajectoryTest(): JSX.Element {
   }, [playing, data, speed, endMs]);
 
   // ── Canvas draw function — rebuilt when mission data changes ──────────────
-  // Bounds/scale are pre-computed here; scrubMsRef is read at draw-time so
-  // the RAF can call drawRef.current() without a React render roundtrip.
+  // scrubMsRef is read at draw-time so the RAF can skip React render cycles.
+  // Artemis I: view rotates each frame to keep Orion pointing right.
+  // Artemis II: view is locked to the max-distance orientation; only a minimal
+  //             rotation correction is applied when Orion would leave the canvas.
   useEffect(() => {
     if (!data || !ts) {
       drawRef.current = () => {};
       return;
     }
     const { ox, oy, mx, my } = data.points;
-    // Pre-compute stable world bounds (don't change during playback)
-    let minX = Infinity,
-      maxX = -Infinity,
-      minY = Infinity,
-      maxY = -Infinity;
-    for (let i = 0; i < ox.length; i++) {
-      if (ox[i] < minX) minX = ox[i];
-      if (ox[i] > maxX) maxX = ox[i];
-      if (oy[i] < minY) minY = oy[i];
-      if (oy[i] > maxY) maxY = oy[i];
-      if (mx[i] < minX) minX = mx[i];
-      if (mx[i] > maxX) maxX = mx[i];
-      if (my[i] < minY) minY = my[i];
-      if (my[i] > maxY) maxY = my[i];
+
+    // Artemis II: find the max-distance trajectory point and compute the fixed
+    // view rotation that puts that direction to the right of Earth.
+    let rotFixed = 0;
+    if (data.mission_id === "artemis-ii") {
+      let maxDistSq = 0;
+      let maxDistIdx = 0;
+      for (let i = 0; i < ox.length; i++) {
+        const dsq = ox[i] * ox[i] + oy[i] * oy[i];
+        if (dsq > maxDistSq) {
+          maxDistSq = dsq;
+          maxDistIdx = i;
+        }
+      }
+      rotFixed = Math.atan2(-oy[maxDistIdx], ox[maxDistIdx]);
     }
-    const pad = 0.08;
-    const worldCx = (minX + maxX) / 2;
-    const worldCy = (minY + maxY) / 2;
-    const worldSx = (maxX - minX) * (1 + pad);
-    const worldSy = (maxY - minY) * (1 + pad);
 
     drawRef.current = () => {
       const canvas = canvasRef.current;
@@ -304,16 +302,9 @@ function TrajectoryTest(): JSX.Element {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      const scale = Math.min(W / worldSx, H / worldSy);
-      const project = (kmX: number, kmY: number): [number, number] => [
-        W / 2 + (kmX - worldCx) * scale,
-        H / 2 - (kmY - worldCy) * scale,
-      ];
-
+      // Interpolate current positions first — needed to derive rotation
       const idx = findIndex(ts, scrubMsRef.current, lastIdxRef.current);
       lastIdxRef.current = idx;
-
-      // Interpolation factor between idx and idx+1 for smooth motion
       const nextI = Math.min(idx + 1, ts.length - 1);
       const tGap = ts[nextI] - ts[idx];
       const alpha = tGap > 0 ? Math.min(1, (scrubMsRef.current - ts[idx]) / tGap) : 0;
@@ -323,9 +314,57 @@ function TrajectoryTest(): JSX.Element {
       const moonCurX = lerp(mx[idx], mx[nextI]);
       const moonCurY = lerp(my[idx], my[nextI]);
 
+      // Fixed layout: Earth at 12% from left; scale so max_distance_km lands at 88%
+      const earthSX = W * 0.12;
+      const earthSY = H * 0.5;
+      const scale = (W * 0.76) / data.max_distance_km;
+
+      // Rotation:
+      // Artemis I  — always align Orion's current direction with screen +X.
+      // Artemis II — hold the max-distance orientation fixed; only rotate by the
+      //              minimum amount needed to keep Orion inside the canvas.
+      const psi = Math.atan2(orionCurY, orionCurX); // world angle of Orion from Earth
+      let rot: number;
+      if (data.mission_id !== "artemis-ii") {
+        rot = -psi;
+      } else {
+        const orionScreenR = Math.hypot(orionCurX, orionCurY) * scale;
+        if (orionScreenR < 1) {
+          rot = rotFixed;
+        } else {
+          // theta = Orion's angular offset from the fixed view direction
+          const theta = psi + rotFixed;
+          const pad = 12 * dpr;
+          const sinMax = Math.min(1, (earthSY - pad) / orionScreenR);
+          const sinTheta = Math.sin(theta);
+          if (Math.abs(sinTheta) <= sinMax) {
+            rot = rotFixed;
+          } else {
+            // Nearest angle where |sin(theta)| == sinMax — minimum rotation delta
+            const asinMax = Math.asin(sinMax);
+            const thetaN = (((theta % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+            let thetaNew: number;
+            if (sinTheta > sinMax) {
+              thetaNew = thetaN <= Math.PI / 2 ? asinMax : Math.PI - asinMax;
+            } else {
+              thetaNew = thetaN >= -Math.PI / 2 ? -asinMax : -(Math.PI - asinMax);
+            }
+            rot = thetaNew - psi;
+          }
+        }
+      }
+      const cosR = Math.cos(rot);
+      const sinR = Math.sin(rot);
+
+      const project = (kmX: number, kmY: number): [number, number] => {
+        const rx = kmX * cosR - kmY * sinR;
+        const ry = kmX * sinR + kmY * cosR;
+        return [earthSX + rx * scale, earthSY - ry * scale];
+      };
+
       ctx.fillStyle = "#03060c";
       ctx.fillRect(0, 0, W, H);
-      drawStars(ctx, W, H);
+      drawStars(ctx, W, H, rot);
 
       // Moon trail (dashed)
       ctx.strokeStyle = "rgba(160, 160, 200, 0.35)";
@@ -666,27 +705,82 @@ function TrajectoryTest(): JSX.Element {
 }
 
 // ── Background star field ────────────────────────────────────────────────────
+// Stars are pre-rendered once onto a square offscreen canvas whose side equals
+// the viewport diagonal (√(W²+H²)).  That guarantees the square, when centred
+// on the viewport and rotated by any angle, still fully covers the visible area
+// — solving the "missing stars in corners during rotation" problem.  The canvas
+// is rebuilt only when viewport dimensions change, so per-frame cost is a
+// single drawImage call.
 
-/**
- * Render the real Hipparcos/d3-celestial star catalog projected as equatorial
- * rectangular (RA → x, Dec → y).
- */
-function drawStars(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  const dpr = window.devicePixelRatio || 1;
+let _starOff: HTMLCanvasElement | null = null;
+let _starOffSide = 0;
+let _starOffW = 0;
+let _starOffH = 0;
+let _starOffDpr = 0;
+
+// Stars are laid out at (x*W, y*H) — matching the original viewport mapping —
+// but offset into a D×D canvas (D = viewport diagonal) so any rotation angle
+// keeps the full W×H viewport covered.  The rotation pivot is Earth's screen
+// position (earthSX, earthSY) so stars and trajectory co-rotate exactly.
+function ensureStarOffscreen(W: number, H: number, dpr: number): [HTMLCanvasElement, number] {
+  const earthSX = W * 0.12;
+  const earthSY = H * 0.5;
+  // The canvas must fully cover the viewport at any rotation angle around the
+  // Earth pivot.  size = 2 × (max distance from pivot to any viewport corner).
+  const maxDist = Math.max(
+    Math.hypot(earthSX, earthSY),
+    Math.hypot(W - earthSX, earthSY),
+    Math.hypot(earthSX, H - earthSY),
+    Math.hypot(W - earthSX, H - earthSY)
+  );
+  const side = Math.ceil(maxDist * 2);
+  if (
+    _starOff &&
+    _starOffSide === side &&
+    _starOffW === W &&
+    _starOffH === H &&
+    _starOffDpr === dpr
+  ) {
+    return [_starOff, side];
+  }
+  const c = document.createElement("canvas");
+  c.width = side;
+  c.height = side;
+  const octx = c.getContext("2d")!;
+  const half = side / 2;
   const { n, x, y, r, color } = _starCatalog;
   for (let i = 0; i < n; i++) {
-    const px = x[i] * w;
-    const py = y[i] * h;
+    const px = half + x[i] * W - earthSX;
+    const py = half + y[i] * H - earthSY;
     const pr = r[i] * dpr;
-    ctx.fillStyle = color[i];
+    octx.fillStyle = color[i];
     if (pr < 0.8) {
-      ctx.fillRect(Math.round(px), Math.round(py), 1, 1);
+      octx.fillRect(Math.round(px), Math.round(py), 1, 1);
     } else {
-      ctx.beginPath();
-      ctx.arc(px, py, pr, 0, Math.PI * 2);
-      ctx.fill();
+      octx.beginPath();
+      octx.arc(px, py, pr, 0, Math.PI * 2);
+      octx.fill();
     }
   }
+  _starOff = c;
+  _starOffSide = side;
+  _starOffW = W;
+  _starOffH = H;
+  _starOffDpr = dpr;
+  return [c, side];
+}
+
+function drawStars(ctx: CanvasRenderingContext2D, W: number, H: number, rot: number): void {
+  const dpr = window.devicePixelRatio || 1;
+  const [starCanvas, side] = ensureStarOffscreen(W, H, dpr);
+  const half = side / 2;
+  const earthSX = W * 0.12;
+  const earthSY = H * 0.5;
+  ctx.save();
+  ctx.translate(earthSX, earthSY);
+  ctx.rotate(-rot);
+  ctx.drawImage(starCanvas, -half, -half);
+  ctx.restore();
 }
 
 export default TrajectoryTest;

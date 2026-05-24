@@ -53,7 +53,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  max-width: 960px;
+  max-width: 100%;
   margin-bottom: 0.6rem;
 }
 
@@ -106,10 +106,9 @@
   border: 1px solid #1f3052;
   border-radius: 4px;
   overflow: hidden;
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  max-width: 720px;
-  max-height: 55vh;
+  width: calc(100% + 3rem);
+  margin-left: -1.5rem;
+  height: 200px;
   margin-bottom: 0.75rem;
 }
 
@@ -136,7 +135,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  max-width: 720px;
+  max-width: 100%;
   margin-bottom: 1rem;
 }
 
@@ -194,7 +193,7 @@
 /* ── notes ───────────────────────────────────────────────────── */
 
 .notes {
-  max-width: 720px;
+  max-width: 100%;
   font-size: 0.75rem;
   color: #6a86a8;
   line-height: 1.5;
@@ -228,7 +227,7 @@
   border-radius: 4px;
   padding: 0.45rem 0.85rem;
   font-size: 0.8rem;
-  max-width: 720px;
+  max-width: 100%;
   margin-bottom: 0.6rem;
   min-width: 0;
   overflow: hidden;
