@@ -1,5 +1,8 @@
 """Step 2h — Split a large MKV into YouTube-ready MP4 chunks.
 
+The YouTube stream can be found on Internet Archive here:
+https://archive.org/download/nasa-artemis-ii-primarystream
+
 Splits without re-encoding (stream copy) for maximum speed.  MP4 supports
 H.264/H.265 video and AAC audio natively, so no transcode is needed for files
 captured from a YouTube live stream at standard quality.

@@ -185,8 +185,8 @@ def main() -> None:
         help="YouTube privacy status (default: unlisted)",
     )
     parser.add_argument(
-        "--chunk-hours", type=float, default=12.0,
-        help="Chunk size used during splitting, for title/description (default: 12)",
+        "--chunk-hours", type=float, default=8.0,
+        help="Chunk size used during splitting, for title/description (default: 8)",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
