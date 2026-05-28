@@ -3,6 +3,8 @@ import { JSX, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
 import { Line } from "@react-three/drei";
 import * as THREE from "three";
+import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
+import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 // solar-calculator has no types — declare what we use.
 import * as solar from "solar-calculator";
 import brightStarsRaw from "../data/bright-stars.json";
@@ -375,40 +377,87 @@ function Moon({
   );
 }
 
-// ── Orion marker (sprite, fixed pixel size) ─────────────────────────────────
+// ── Orion marker (OBJ model, falls back to orange sphere while loading) ───────
 
 function Orion({
   positionRef,
+  sunDirRef,
 }: {
   positionRef: React.MutableRefObject<THREE.Vector3>;
+  sunDirRef: React.MutableRefObject<THREE.Vector3>;
 }): JSX.Element {
-  const spriteRef = useRef<THREE.Sprite>(null);
-  const ringRef = useRef<THREE.Sprite>(null);
-  useFrame(() => {
-    if (spriteRef.current) spriteRef.current.position.copy(positionRef.current);
-    if (ringRef.current) ringRef.current.position.copy(positionRef.current);
-  });
-  // Build a circle texture once
-  const dotTex = useMemo(() => {
-    const c = document.createElement("canvas");
-    c.width = 64;
-    c.height = 64;
-    const g = c.getContext("2d")!;
-    g.beginPath();
-    g.arc(32, 32, 22, 0, Math.PI * 2);
-    g.fillStyle = "#ff8a3c";
-    g.fill();
-    g.lineWidth = 4;
-    g.strokeStyle = "#ffffff";
-    g.stroke();
-    const tex = new THREE.CanvasTexture(c);
-    tex.needsUpdate = true;
-    return tex;
+  const groupRef = useRef<THREE.Group>(null);
+  const fallbackRef = useRef<THREE.Mesh>(null);
+  const matRef = useRef<THREE.ShaderMaterial | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    new MTLLoader()
+      .loadAsync("/3D/orion_crew_service_solar_arrays_simplified.mtl")
+      .then((mats) => {
+        mats.preload();
+        const loader = new OBJLoader();
+        loader.setMaterials(mats);
+        return loader.loadAsync("/3D/orion_crew_service_solar_arrays_simplified.obj");
+      })
+      .then((model) => {
+        if (cancelled || !groupRef.current) return;
+        // Scene has no THREE.Lights (custom shaders only). Replace materials
+        // with a sun-shaded shader (same approach as the Moon) so the model
+        // picks up the same day/night lighting as the planets.
+        const sharedMat = new THREE.ShaderMaterial({
+          vertexShader: moonVertex,
+          fragmentShader: moonFragment,
+          uniforms: {
+            baseColor: { value: new THREE.Color(0xd8dde6) },
+            sunDirection: { value: new THREE.Vector3(1, 0, 0) },
+          },
+        });
+        matRef.current = sharedMat;
+        model.traverse((child) => {
+          const mesh = child as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          if (mesh.geometry && !mesh.geometry.getAttribute("normal")) {
+            mesh.geometry.computeVertexNormals();
+          }
+          mesh.material = sharedMat;
+        });
+        const box = new THREE.Box3().setFromObject(model);
+        const sz = new THREE.Vector3();
+        box.getSize(sz);
+        const maxDim = Math.max(sz.x, sz.y, sz.z);
+        // Target size: 2.5 R⊕ across so it's clearly visible against Earth (radius 1).
+        const target = 2.5;
+        model.scale.setScalar(maxDim > 0 ? target / maxDim : 1);
+        const center = new THREE.Vector3();
+        new THREE.Box3().setFromObject(model).getCenter(center);
+        model.position.sub(center);
+        model.rotation.x = Math.PI / 2;
+        groupRef.current.add(model);
+        if (fallbackRef.current) fallbackRef.current.visible = false;
+      })
+      .catch(() => {
+        /* keep fallback sphere */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useFrame(() => {
+    if (groupRef.current) groupRef.current.position.copy(positionRef.current);
+    if (matRef.current) {
+      (matRef.current.uniforms.sunDirection.value as THREE.Vector3).copy(sunDirRef.current);
+    }
+  });
+
   return (
-    <sprite ref={spriteRef} scale={[1.2, 1.2, 1]}>
-      <spriteMaterial map={dotTex} depthTest={false} sizeAttenuation={true} />
-    </sprite>
+    <group ref={groupRef}>
+      <mesh ref={fallbackRef}>
+        <sphereGeometry args={[0.5, 16, 16]} />
+        <meshBasicMaterial color="#ff8a3c" />
+      </mesh>
+    </group>
   );
 }
 
@@ -795,7 +844,7 @@ function TrajectoryScene({
         {/* Trajectory group: rotates by `rot` to keep Orion on the right */}
         <group ref={groupRef}>
           <Moon positionRef={moonPosRef} sunDirRef={sunDirRef} radius={moonRadius} />
-          <Orion positionRef={orionPosRef} />
+          <Orion positionRef={orionPosRef} sunDirRef={sunDirRef} />
           <TrajectoryLines data={data} idxRef={idxRef} orionPosRef={orionPosRef} />
         </group>
       </group>

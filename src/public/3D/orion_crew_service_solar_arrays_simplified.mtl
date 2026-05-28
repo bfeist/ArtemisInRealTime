@@ -1,0 +1,18 @@
+newmtl white
+Kd 0.86 0.86 0.82
+Ka 0.2 0.2 0.2
+newmtl silver
+Kd 0.72 0.72 0.68
+Ka 0.2 0.2 0.2
+newmtl grey
+Kd 0.45 0.47 0.48
+Ka 0.1 0.1 0.1
+newmtl dark
+Kd 0.02 0.025 0.035
+Ka 0.0 0.0 0.0
+newmtl blue
+Kd 0.02 0.14 0.45
+Ka 0.0 0.0 0.05
+newmtl red
+Kd 0.75 0.05 0.02
+Ka 0.1 0.0 0.0
