@@ -417,3 +417,9 @@ import TrajectoryTest2 from "./pages/TrajectoryTest2.tsx";
 7. **Trajectory line approach (zwei strategies)**: Moon arc uses `<Line>` from drei (static, dashed, fat line). Orion past/future use raw `<line>` + `BufferGeometry` with `drawRange` for zero-allocation per-frame updates — matching the imperative pattern of the existing 2D `drawRef`.
 
 8. **No `three-globe`, no `react-globe.gl`**: Both evaluated and rejected. `three-globe` manages its own camera/controls; `react-globe.gl` requires ECEF coordinates. The custom procedural shaders are simpler and more controllable.
+
+---
+
+## 9. Follow-up Refactor Guide
+
+See [`trajectory-ui-split-plan.md`](./trajectory-ui-split-plan.md) for a production-oriented split plan. It covers the proposed `src/features/trajectory/` layout, extraction order, hook/component boundaries, scene module split, CSS split, and verification checklist for turning `TrajectoryTest2.tsx` into a real reusable UI.

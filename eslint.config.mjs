@@ -26,7 +26,15 @@ const compat = new FlatCompat({
 
 export default [
   {
-    ignores: ["**/public/**/*", "**/coverage", "**/.local", "coverage/*", "**/.venv", "_webroot/**"],
+    ignores: [
+      "**/public/**/*",
+      "**/coverage",
+      "**/.local",
+      "coverage/*",
+      "**/.venv",
+      "_webroot/**",
+      "ArtemisIIIRT(Charney)/**",
+    ],
   },
   ...fixupConfigRules(compat.extends("prettier", "plugin:jsx-a11y/recommended")),
   {
@@ -38,7 +46,7 @@ export default [
     },
   },
   {
-    files: ["**/*.{js,jsx,ts,tsx}"],
+    files: ["src/**/*.{js,jsx,ts,tsx}"],
     plugins: {
       react,
       "@typescript-eslint": typescriptEslint,

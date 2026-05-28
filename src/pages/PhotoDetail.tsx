@@ -40,6 +40,7 @@ const DATE_SOURCE_TONE: Record<DateSource, string> = {
   io_exif: styles.toneGreen,
   io_corrected: styles.toneYellow,
   io_onboard: styles.toneYellow,
+  exif_notz: styles.toneOrange,
   flickr: styles.toneOrange,
   nasa_images: styles.toneOrange,
 };
