@@ -21,9 +21,10 @@
  * to shrink Tier 1's magWindow to an impractically tiny sliver.
  */
 
-import { JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./TimelineTest2.module.css";
 import type { Photo } from "../types/photos.ts";
+import { usePlaybackClock } from "../hooks/usePlaybackClock.ts";
 
 const ASSETS_BASE = import.meta.env.DEV ? "/artemis-assets" : "https://media.artemisinrealtime.org";
 
@@ -262,7 +263,7 @@ function ZoomBar({
         if (!el2) return;
         const r = el2.getBoundingClientRect();
         const deltaX = e.clientX - deltaStartXRef.current;
-        const deltaMs = (deltaX / r.width) * totalMs;
+        const deltaMs = -(deltaX / r.width) * totalMs;
         onSeek(clamp(deltaStartScrubMsRef.current + deltaMs, coverageStartMs, coverageEndMs));
       } else if (action === "pan") {
         const windowDur = windowEndMsRef.current - windowStartMsRef.current;
@@ -630,7 +631,7 @@ interface DetailStripProps {
 
 function DetailStrip({
   windowStartMs,
-  windowEndMs,
+  windowEndMs: _windowEndMs,
   windowDurationMs,
   scrubMs,
   events,
@@ -666,24 +667,36 @@ function DetailStrip({
 
   const playheadPct = toLocalPct(scrubMs);
 
+  // Rail-offset approach: anchor all content positions to the nearest tick-step
+  // boundary before windowStartMs so element `left` values stay stable between
+  // step crossings.  A single `transform: translateX(railTranslatePct%)` on the
+  // scrolling content container handles sub-pixel motion via the GPU compositor,
+  // eliminating the per-element CSS layout recalculation that causes jitter.
+  //
+  // CRITICAL: useMemo deps below use `railStart` / `railEnd` (which only change
+  // at tick-step crossings), NOT `windowStartMs` / `windowEndMs` (which change
+  // every animation frame).  This is what keeps the marker arrays from being
+  // rebuilt 60 times per second.
+  const tickStep = tickStepMs(windowDurationMs);
+  const railStart = Math.floor(windowStartMs / tickStep) * tickStep;
+  const railEnd = railStart + windowDurationMs + tickStep;
+  const railTranslatePct = -((windowStartMs - railStart) / windowDurationMs) * 100;
+
   const ticks = useMemo(() => {
-    const step = tickStepMs(windowDurationMs);
-    const firstTick = Math.ceil(windowStartMs / step) * step;
     const result: { key: string; pct: number; label: string }[] = [];
-    for (let t = firstTick; t <= windowEndMs; t += step) {
-      const pct = ((t - windowStartMs) / windowDurationMs) * 100;
-      if (pct < -5 || pct > 105) continue;
+    for (let t = railStart; t <= railEnd; t += tickStep) {
+      const pct = ((t - railStart) / windowDurationMs) * 100;
       result.push({ key: String(t), pct, label: formatDetailTick(t, windowDurationMs) });
     }
     return result;
-  }, [windowStartMs, windowEndMs, windowDurationMs]);
+  }, [railStart, railEnd, tickStep, windowDurationMs]);
 
   const visibleEvents = useMemo(() => {
     return events
       .map((ev) => ({ ev, ms: parseUtc(ev.t) }))
-      .filter(({ ms }) => ms >= windowStartMs && ms <= windowEndMs)
-      .map(({ ev, ms }) => ({ ev, pct: toLocalPct(ms) }));
-  }, [events, windowStartMs, windowEndMs, toLocalPct]);
+      .filter(({ ms }) => ms >= railStart && ms <= railEnd)
+      .map(({ ev, ms }) => ({ ev, pct: ((ms - railStart) / windowDurationMs) * 100 }));
+  }, [events, railStart, railEnd, windowDurationMs]);
 
   const photoMarks = useMemo(() => {
     // Bucket to ~1200 slots so zoomed-out views don't create thousands of DOM nodes
@@ -692,13 +705,13 @@ function DetailStrip({
     for (const p of photos) {
       if (isMidnightUtc(p.date)) continue;
       const ms = parseUtc(p.date);
-      if (ms < windowStartMs || ms > windowEndMs) continue;
-      const pct = toLocalPct(ms);
+      if (ms < railStart || ms > railEnd) continue;
+      const pct = ((ms - railStart) / windowDurationMs) * 100;
       const bucket = Math.floor((pct / 100) * BUCKETS);
       if (!buckets.has(bucket)) buckets.set(bucket, pct);
     }
     return Array.from(buckets.entries()).map(([b, pct]) => ({ key: `ph${b}`, pct }));
-  }, [photos, windowStartMs, windowEndMs, toLocalPct]);
+  }, [photos, railStart, railEnd, windowDurationMs]);
 
   const commSegments = useMemo(() => {
     // For detail strip, render actual segments when zoomed in, else bucket to ticks
@@ -709,13 +722,13 @@ function DetailStrip({
     for (const e of commEntries) {
       const s = parseUtc(e.t);
       const end = s + e.d * 1000;
-      if (end < windowStartMs || s > windowEndMs) {
+      if (end < railStart || s > railEnd) {
         idx++;
         continue;
       }
-      const cs = Math.max(s, windowStartMs);
-      const ce = Math.min(end, windowEndMs);
-      const leftPct = toLocalPct(cs);
+      const cs = Math.max(s, railStart);
+      const ce = Math.min(end, railEnd);
+      const leftPct = ((cs - railStart) / windowDurationMs) * 100;
       const widthPct = Math.max(((ce - cs) / windowDurationMs) * 100, 0.2);
       // If segment is very narrow (<0.1%), deduplicate by bucket
       if (widthPct < 0.1) {
@@ -730,7 +743,28 @@ function DetailStrip({
       idx++;
     }
     return results;
-  }, [commEntries, windowStartMs, windowEndMs, windowDurationMs, toLocalPct]);
+  }, [commEntries, railStart, railEnd, windowDurationMs]);
+
+  const railStyle = useMemo<CSSProperties>(
+    () => ({
+      position: "absolute",
+      inset: 0,
+      transform: `translateX(${railTranslatePct}%)`,
+    }),
+    [railTranslatePct]
+  );
+
+  // Second-level grid lines — only rendered when zoomed in to 5 min or less
+  const secLines = useMemo(() => {
+    if (windowDurationMs > 5 * 60_000) return [];
+    const lines: { key: string; pct: number }[] = [];
+    const firstSec = Math.ceil(railStart / 1000) * 1000;
+    for (let t = firstSec; t <= railEnd; t += 1000) {
+      const pct = ((t - railStart) / windowDurationMs) * 100;
+      lines.push({ key: String(t), pct });
+    }
+    return lines;
+  }, [railStart, railEnd, windowDurationMs]);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -764,6 +798,16 @@ function DetailStrip({
         dragStartScrubMsRef.current = scrubMs;
       }}
     >
+      {secLines.length > 0 && (
+        <div className={styles.secGrid} aria-hidden="true">
+          <div style={railStyle}>
+            {secLines.map((l) => (
+              <div key={l.key} className={styles.secLine} style={{ left: `${l.pct}%` }} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className={styles.zoomControls}>
         <button
           type="button"
@@ -794,51 +838,59 @@ function DetailStrip({
       <div className={styles.zoomLabel}>{zoomLabel}</div>
 
       <div className={styles.timeAxis}>
-        {ticks.map((tick) => (
-          <div key={tick.key} className={styles.timeTick} style={{ left: `${tick.pct}%` }}>
-            <div className={styles.timeTickLine} />
-            <div className={styles.timeTickLabel}>{tick.label}</div>
-          </div>
-        ))}
+        <div style={railStyle}>
+          {ticks.map((tick) => (
+            <div key={tick.key} className={styles.timeTick} style={{ left: `${tick.pct}%` }}>
+              <div className={styles.timeTickLine} />
+              <div className={styles.timeTickLabel}>{tick.label}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className={styles.eventsRow}>
         <div className={styles.eventsRowLabel}>Events</div>
-        {visibleEvents.map(({ ev, pct }) => (
-          <div
-            key={ev.id}
-            className={styles.eventMarker}
-            style={{ left: `${pct}%` }}
-            title={`${ev.name}: ${ev.description}`}
-          >
-            <div className={styles.eventDiamond} style={{ background: ev.color || "#6e9aff" }} />
-            <div className={styles.eventLine} />
-            <div className={styles.eventLabel}>{ev.name}</div>
-          </div>
-        ))}
+        <div style={railStyle}>
+          {visibleEvents.map(({ ev, pct }) => (
+            <div
+              key={ev.id}
+              className={styles.eventMarker}
+              style={{ left: `${pct}%` }}
+              title={`${ev.name}: ${ev.description}`}
+            >
+              <div className={styles.eventDiamond} style={{ background: ev.color || "#6e9aff" }} />
+              <div className={styles.eventLine} />
+              <div className={styles.eventLabel}>{ev.name}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className={styles.trackRow}>
         <div className={styles.trackLabel}>Photos</div>
-        {photoMarks.map((m) => (
-          <div
-            key={m.key}
-            className={`${styles.trackSegment} ${styles.trackSegmentPhoto}`}
-            style={{ left: `${m.pct}%`, width: "2px" }}
-          />
-        ))}
+        <div style={railStyle}>
+          {photoMarks.map((m) => (
+            <div
+              key={m.key}
+              className={`${styles.trackSegment} ${styles.trackSegmentPhoto}`}
+              style={{ left: `${m.pct}%`, width: "2px" }}
+            />
+          ))}
+        </div>
       </div>
 
       <div className={styles.trackRow}>
         <div className={styles.trackLabel}>Comm</div>
-        {commSegments.map((seg) => (
-          <div
-            key={seg.key}
-            className={`${styles.trackSegment} ${styles.trackSegmentComm}`}
-            style={{ left: `${seg.leftPct}%`, width: `${seg.widthPct}%` }}
-            title={seg.title}
-          />
-        ))}
+        <div style={railStyle}>
+          {commSegments.map((seg) => (
+            <div
+              key={seg.key}
+              className={`${styles.trackSegment} ${styles.trackSegmentComm}`}
+              style={{ left: `${seg.leftPct}%`, width: `${seg.widthPct}%` }}
+              title={seg.title}
+            />
+          ))}
+        </div>
       </div>
 
       {previewMs != null && (
@@ -926,56 +978,44 @@ function TimelineTest2(): JSX.Element {
     : 0;
   const launchMs = itinerary ? parseUtc(itinerary.launch_utc) : 0;
 
-  const [scrubMs, setScrubMs] = useState(0);
   const [previewMs, setPreviewMs] = useState<number | null>(null);
   const [outerDurationMs, setOuterDurationMs] = useState(OUTER_ZOOM_STEPS_MS[3]); // 1 day
   const [innerDurationMs, setInnerDurationMs] = useState(INNER_ZOOM_STEPS_MS[2]); // 1 hour
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState<Speed>(60);
 
-  const scrubMsRef = useRef(0);
+  // Playback clock: derive-don't-accumulate.  See usePlaybackClock for details.
+  // We use rAF for the React-reactive re-render because the timeline ribbon
+  // needs visually buttery motion at deep zoom levels.  This is safe (unlike
+  // the previous in-page rAF loop) because the hook performs zero dt
+  // accumulation — each frame just reads Date.now() and recomputes from the
+  // immutable anchor, so duplicate StrictMode loops can't introduce drift.
+  const playback = usePlaybackClock({
+    initialMs: 0,
+    initialSpeed: 60,
+    initialRunning: false,
+    minMs: coverageStartMs,
+    maxMs: coverageEndMs,
+    updateMode: "raf",
+  });
+  const scrubMs = playback.currentMs;
+  const setScrubMs = playback.setCurrent;
+  const playing = playback.isRunning;
+  const speed = playback.speed as Speed;
+  const setSpeed = playback.setSpeed as (s: Speed) => void;
+
   const previewMsRef = useRef<number | null>(null);
   const isScrubbingRef = useRef(false);
-  const rafRef = useRef<number | null>(null);
-  const lastFrameRef = useRef(0);
 
   const scrubInitializedRef = useRef(false);
   useEffect(() => {
     if (itinerary && !scrubInitializedRef.current) {
       scrubInitializedRef.current = true;
-      const init = parseUtc(itinerary.launch_utc);
-      setScrubMs(init);
-      scrubMsRef.current = init;
+      setScrubMs(parseUtc(itinerary.launch_utc));
     }
-  }, [itinerary]);
+  }, [itinerary, setScrubMs]);
 
-  useEffect(() => {
-    scrubMsRef.current = scrubMs;
-  }, [scrubMs]);
   useEffect(() => {
     previewMsRef.current = previewMs;
   }, [previewMs]);
-
-  useEffect(() => {
-    if (!playing || !itinerary) return;
-    const tick = (now: number) => {
-      const dt = now - lastFrameRef.current;
-      lastFrameRef.current = now;
-      const next = clamp(scrubMsRef.current + dt * speed, coverageStartMs, coverageEndMs);
-      scrubMsRef.current = next;
-      setScrubMs(next);
-      if (next >= coverageEndMs) {
-        setPlaying(false);
-        return;
-      }
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    lastFrameRef.current = performance.now();
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    };
-  }, [playing, itinerary, speed, coverageStartMs, coverageEndMs]);
 
   // ── Window geometry (outer = Tier 2 viewport, inner = Tier 3 viewport) ───
   const totalCoverage = Math.max(coverageEndMs - coverageStartMs, 1);
@@ -1056,7 +1096,7 @@ function TimelineTest2(): JSX.Element {
         setScrubMs(clamp(ms, coverageStartMs, coverageEndMs));
       }
     },
-    [playing, coverageStartMs, coverageEndMs]
+    [playing, coverageStartMs, coverageEndMs, setScrubMs]
   );
 
   // Outer (Tier 1) window change — adjusts outerDurationMs + seeks playhead.
@@ -1071,7 +1111,7 @@ function TimelineTest2(): JSX.Element {
       }
       setOuterDurationMs(clamp(newDurationMs, MIN_WINDOW_MS, totalCoverage));
     },
-    [playing, coverageStartMs, coverageEndMs, totalCoverage]
+    [playing, coverageStartMs, coverageEndMs, totalCoverage, setScrubMs]
   );
 
   // Inner (Tier 2) window change — adjusts innerDurationMs + seeks playhead.
@@ -1086,7 +1126,7 @@ function TimelineTest2(): JSX.Element {
       }
       setInnerDurationMs(clamp(newDurationMs, MIN_WINDOW_MS, effectiveOuterMs));
     },
-    [playing, coverageStartMs, coverageEndMs, effectiveOuterMs]
+    [playing, coverageStartMs, coverageEndMs, effectiveOuterMs, setScrubMs]
   );
 
   const handleScrubStart = useCallback(() => {
@@ -1097,13 +1137,11 @@ function TimelineTest2(): JSX.Element {
     isScrubbingRef.current = false;
     const prev = previewMsRef.current;
     if (prev !== null) {
-      const clamped = clamp(prev, coverageStartMs, coverageEndMs);
-      scrubMsRef.current = clamped;
-      setScrubMs(clamped);
+      setScrubMs(clamp(prev, coverageStartMs, coverageEndMs));
       setPreviewMs(null);
       previewMsRef.current = null;
     }
-  }, [coverageStartMs, coverageEndMs]);
+  }, [coverageStartMs, coverageEndMs, setScrubMs]);
 
   const phases: Phase[] = itinerary?.phases ?? [];
 
@@ -1169,7 +1207,7 @@ function TimelineTest2(): JSX.Element {
         <button
           type="button"
           className={`${styles.controlBtn} ${playing ? styles.controlBtnActive : ""}`}
-          onClick={() => setPlaying((p) => !p)}
+          onClick={playback.toggle}
         >
           {playing ? "⏸ Pause" : "▶ Play"}
         </button>
@@ -1182,7 +1220,7 @@ function TimelineTest2(): JSX.Element {
               className={`${styles.controlBtn} ${speed === s && playing ? styles.controlBtnActive : ""}`}
               onClick={() => {
                 setSpeed(s);
-                if (!playing) setPlaying(true);
+                if (!playing) playback.play();
               }}
             >
               ×{s}

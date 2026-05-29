@@ -27,6 +27,7 @@
 import { JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./TimelineTest.module.css";
 import type { Photo } from "../types/photos.ts";
+import { usePlaybackClock } from "../hooks/usePlaybackClock.ts";
 
 const ASSETS_BASE = import.meta.env.DEV ? "/artemis-assets" : "https://media.artemisinrealtime.org";
 
@@ -150,6 +151,8 @@ interface OverviewBarProps {
   windowEndMs: number;
   events: MissionEvent[];
   phases: Phase[];
+  photos?: Photo[];
+  commEntries?: CommEntry[];
   onSeek: (ms: number) => void;
   onWindowChange: (newScrubMs: number, newDurationMs: number) => void;
   previewMs?: number | null;
@@ -166,6 +169,8 @@ function OverviewBar({
   windowEndMs,
   events,
   phases,
+  photos = [],
+  commEntries = [],
   onSeek,
   onWindowChange,
   previewMs,
@@ -346,6 +351,33 @@ function OverviewBar({
     }));
   }, [events, toPercent]);
 
+  // Photo + comm ticks — bucketed to ~1200 slots to cap DOM count
+  const TICK_BUCKETS = 1200;
+  const photoTicks = useMemo(() => {
+    const buckets = new Map<number, number>();
+    for (const p of photos) {
+      if (isMidnightUtc(p.date)) continue;
+      const ms = parseUtc(p.date);
+      if (ms < coverageStartMs || ms > coverageEndMs) continue;
+      const pct = ((ms - coverageStartMs) / totalMs) * 100;
+      const bucket = Math.floor((pct / 100) * TICK_BUCKETS);
+      if (!buckets.has(bucket)) buckets.set(bucket, pct);
+    }
+    return Array.from(buckets.entries()).map(([b, pct]) => ({ key: `ph${b}`, leftPct: pct }));
+  }, [photos, coverageStartMs, coverageEndMs, totalMs]);
+
+  const commTicks = useMemo(() => {
+    const buckets = new Map<number, number>();
+    for (const e of commEntries) {
+      const ms = parseUtc(e.t);
+      if (ms < coverageStartMs || ms > coverageEndMs) continue;
+      const pct = ((ms - coverageStartMs) / totalMs) * 100;
+      const bucket = Math.floor((pct / 100) * TICK_BUCKETS);
+      if (!buckets.has(bucket)) buckets.set(bucket, pct);
+    }
+    return Array.from(buckets.entries()).map(([b, pct]) => ({ key: `cm${b}`, leftPct: pct }));
+  }, [commEntries, coverageStartMs, coverageEndMs, totalMs]);
+
   // Zoom window geometry (in percent of total width)
   const winLeft = toPercent(windowStartMs);
   const winRight = toPercent(windowEndMs);
@@ -436,6 +468,16 @@ function OverviewBar({
             style={{ left: `${ev.leftPct}%` }}
             title={ev.name}
           />
+        ))}
+      </div>
+
+      {/* Photo + comm tick rows */}
+      <div className={styles.mediaTicks}>
+        {photoTicks.map((t) => (
+          <div key={t.key} className={styles.photoTick} style={{ left: `${t.leftPct}%` }} />
+        ))}
+        {commTicks.map((t) => (
+          <div key={t.key} className={styles.commTick} style={{ left: `${t.leftPct}%` }} />
         ))}
       </div>
 
@@ -668,6 +710,19 @@ function DetailStrip({
       });
   }, [commEntries, windowStartMs, windowEndMs, windowDurationMs, toLocalPct]);
 
+  // Second-level grid lines — only rendered when zoomed in to 5 min or less
+  const secLines = useMemo(() => {
+    if (windowDurationMs > 5 * 60_000) return [];
+    const lines: { key: string; pct: number }[] = [];
+    const firstSec = Math.ceil(windowStartMs / 1000) * 1000;
+    for (let t = firstSec; t <= windowEndMs; t += 1000) {
+      const pct = ((t - windowStartMs) / windowDurationMs) * 100;
+      if (pct < 0 || pct > 100) continue;
+      lines.push({ key: String(t), pct });
+    }
+    return lines;
+  }, [windowStartMs, windowEndMs, windowDurationMs]);
+
   // Pan drag handling
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -701,6 +756,14 @@ function DetailStrip({
         dragStartScrubMsRef.current = scrubMs;
       }}
     >
+      {secLines.length > 0 && (
+        <div className={styles.secGrid} aria-hidden="true">
+          {secLines.map((l) => (
+            <div key={l.key} className={styles.secLine} style={{ left: `${l.pct}%` }} />
+          ))}
+        </div>
+      )}
+
       {/* Zoom controls */}
       <div className={styles.zoomControls}>
         <button
@@ -872,58 +935,44 @@ function TimelineTest(): JSX.Element {
     : 0;
   const launchMs = itinerary ? parseUtc(itinerary.launch_utc) : 0;
 
-  const [scrubMs, setScrubMs] = useState(0);
   const [previewMs, setPreviewMs] = useState<number | null>(null);
   const [windowDurationMs, setWindowDurationMs] = useState(ZOOM_STEPS_MS[1]); // 1 day
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState<Speed>(60);
 
-  const scrubMsRef = useRef(0);
+  // Playback clock: derive-don't-accumulate (see usePlaybackClock).  We use
+  // rAF mode so the timeline ribbon scrolls smoothly at deep zoom; this is
+  // safe because the hook does NOT do dt accumulation inside the rAF loop —
+  // every frame just reads Date.now() and recomputes from the immutable
+  // anchor, so duplicate StrictMode loops can't introduce drift or backward
+  // motion.
+  const playback = usePlaybackClock({
+    initialMs: 0,
+    initialSpeed: 60,
+    initialRunning: false,
+    minMs: coverageStartMs,
+    maxMs: coverageEndMs,
+    updateMode: "raf",
+  });
+  const scrubMs = playback.currentMs;
+  const setScrubMs = playback.setCurrent;
+  const playing = playback.isRunning;
+  const speed = playback.speed as Speed;
+  const setSpeed = playback.setSpeed as (s: Speed) => void;
+
   const previewMsRef = useRef<number | null>(null);
   const isScrubbingRef = useRef(false);
-  const rafRef = useRef<number | null>(null);
-  const lastFrameRef = useRef(0);
 
   // Initialize scrub once coverage is known (only on first itinerary load).
   const scrubInitializedRef = useRef(false);
   useEffect(() => {
     if (itinerary && !scrubInitializedRef.current) {
       scrubInitializedRef.current = true;
-      const init = parseUtc(itinerary.launch_utc);
-      setScrubMs(init);
-      scrubMsRef.current = init;
+      setScrubMs(parseUtc(itinerary.launch_utc));
     }
-  }, [itinerary]);
+  }, [itinerary, setScrubMs]);
 
-  // Keep refs in sync
-  useEffect(() => {
-    scrubMsRef.current = scrubMs;
-  }, [scrubMs]);
   useEffect(() => {
     previewMsRef.current = previewMs;
   }, [previewMs]);
-
-  // Playback RAF loop
-  useEffect(() => {
-    if (!playing || !itinerary) return;
-    const tick = (now: number) => {
-      const dt = now - lastFrameRef.current;
-      lastFrameRef.current = now;
-      const next = clamp(scrubMsRef.current + dt * speed, coverageStartMs, coverageEndMs);
-      scrubMsRef.current = next;
-      setScrubMs(next);
-      if (next >= coverageEndMs) {
-        setPlaying(false);
-        return;
-      }
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    lastFrameRef.current = performance.now();
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    };
-  }, [playing, itinerary, speed, coverageStartMs, coverageEndMs]);
 
   // ── Window geometry ────────────────────────────────────────────────────────
   // Guard against window > coverage (can happen briefly before data loads, or if
@@ -985,7 +1034,7 @@ function TimelineTest(): JSX.Element {
         setScrubMs(clamp(ms, coverageStartMs, coverageEndMs));
       }
     },
-    [playing, coverageStartMs, coverageEndMs]
+    [playing, coverageStartMs, coverageEndMs, setScrubMs]
   );
 
   // ── Window change (edge-drag resize or day-click zoom) ────────────────────
@@ -1000,7 +1049,7 @@ function TimelineTest(): JSX.Element {
       }
       setWindowDurationMs(clamp(newDurationMs, MIN_WINDOW_MS, coverageEndMs - coverageStartMs));
     },
-    [playing, coverageStartMs, coverageEndMs]
+    [playing, coverageStartMs, coverageEndMs, setScrubMs]
   );
 
   const handleScrubStart = useCallback(() => {
@@ -1011,13 +1060,11 @@ function TimelineTest(): JSX.Element {
     isScrubbingRef.current = false;
     const prev = previewMsRef.current;
     if (prev !== null) {
-      const clamped = clamp(prev, coverageStartMs, coverageEndMs);
-      scrubMsRef.current = clamped;
-      setScrubMs(clamped);
+      setScrubMs(clamp(prev, coverageStartMs, coverageEndMs));
       setPreviewMs(null);
       previewMsRef.current = null;
     }
-  }, [coverageStartMs, coverageEndMs]);
+  }, [coverageStartMs, coverageEndMs, setScrubMs]);
 
   // ── Phases (may be in itinerary or trajectory) ─────────────────────────────
   const phases: Phase[] = itinerary?.phases ?? [];
@@ -1084,7 +1131,7 @@ function TimelineTest(): JSX.Element {
         <button
           type="button"
           className={`${styles.controlBtn} ${playing ? styles.controlBtnActive : ""}`}
-          onClick={() => setPlaying((p) => !p)}
+          onClick={playback.toggle}
         >
           {playing ? "⏸ Pause" : "▶ Play"}
         </button>
@@ -1097,7 +1144,7 @@ function TimelineTest(): JSX.Element {
               className={`${styles.controlBtn} ${speed === s && playing ? styles.controlBtnActive : ""}`}
               onClick={() => {
                 setSpeed(s);
-                if (!playing) setPlaying(true);
+                if (!playing) playback.play();
               }}
             >
               ×{s}
@@ -1116,6 +1163,8 @@ function TimelineTest(): JSX.Element {
         windowEndMs={windowEndMs}
         events={itinerary.events}
         phases={phases}
+        photos={photos}
+        commEntries={commEntries}
         onSeek={handleSeek}
         onWindowChange={handleWindowChange}
         previewMs={previewMs != null ? scrubMs : null}
