@@ -870,73 +870,109 @@ function DetailStrip({
 }
 
 // ---- MagnifierStrip ---------------------------------------------------------
-// Fixed-zoom (1 second per pixel) magnification lens overlay shown above the
-// center of the DetailStrip when the main detail strip is zoomed coarser than
-// 1 second per pixel. The lens is a fixed pixel width; its time span is simply
-// (widthPx) seconds, centered on `centerMs`.
+// Behaves like a real magnifying glass: a fixed-pixel-width circular-ish lens
+// centered over the DetailStrip's playhead. It samples the slice of the
+// underlying detail strip directly beneath the lens and renders it scaled up
+// by a fixed magnification factor (MAGNIFICATION). So:
+//
+//   detailSecPerPx              — seconds-per-pixel of the strip beneath
+//   lensSecPerPx  = detailSecPerPx / MAGNIFICATION
+//   lensTimeSpan  = widthPx * lensSecPerPx * 1000
+//
+// All tick / event / photo / comm positions are computed in *pixels relative
+// to the lens center*, then everything inside the lens rides on a single
+// CSS `transform: translate3d(...)` so sub-pixel motion is smooth (no
+// integer-pixel snap that you'd see with `left: X%`).
+
+const MAGNIFIER_FACTOR = 12; // how many × the underlying strip is enlarged
+const MIN_LENS_SEC_PER_PX = 0.05; // never finer than 50ms/px (avoids absurd zooms)
 
 interface MagnifierStripProps {
   centerMs: number;
   widthPx: number;
+  detailSecPerPx: number; // seconds-per-pixel of the strip beneath
   events: MissionEvent[];
   photos: Photo[];
   commEntries: CommEntry[];
 }
 
+/** Pick a "nice" tick step (ms) so we get ~3-5 labels across the lens. */
+function lensTickStepMs(lensDurationMs: number): number {
+  const target = lensDurationMs / 4; // aim for ~4 ticks
+  const candidates = [1000, 2000, 5000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000];
+  for (const c of candidates) {
+    if (c >= target) return c;
+  }
+  return candidates[candidates.length - 1];
+}
+
+/** Always-`HH:MM:SS` formatter so all magnifier labels are the same width. */
+function formatLensTick(ms: number): string {
+  const d = new Date(ms);
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
 function MagnifierStrip({
   centerMs,
   widthPx,
+  detailSecPerPx,
   events,
   photos,
   commEntries,
 }: MagnifierStripProps): JSX.Element {
-  // 1 sec/pixel: window duration in ms = widthPx * 1000
-  const windowDurationMs = widthPx * 1000;
-  const windowStartMs = centerMs - windowDurationMs / 2;
-  const windowEndMs = centerMs + windowDurationMs / 2;
+  // Seconds per pixel inside the lens (always finer than the strip beneath).
+  const lensSecPerPx = Math.max(detailSecPerPx / MAGNIFIER_FACTOR, MIN_LENS_SEC_PER_PX);
+  const msPerPx = lensSecPerPx * 1000;
+  const lensDurationMs = widthPx * msPerPx;
+  const halfMs = lensDurationMs / 2;
+  const windowStartMs = centerMs - halfMs;
+  const windowEndMs = centerMs + halfMs;
 
-  const toLocalPct = useCallback(
-    (ms: number) => ((ms - windowStartMs) / windowDurationMs) * 100,
-    [windowStartMs, windowDurationMs]
-  );
+  // Convert any absolute UTC ms to a pixel offset relative to the lens center
+  // (negative = left of center). Used for the inner content that gets
+  // translated as a single rigid unit; this is what avoids per-element
+  // sub-pixel snap.
+  const toCenterPx = useCallback((ms: number) => (ms - centerMs) / msPerPx, [centerMs, msPerPx]);
 
-  // 60-second tick spacing — only ~2 labels visible in a 120-second lens
+  // Major time ticks (with labels). Step adapts so we get ~4 across the lens.
+  const tickStep = lensTickStepMs(lensDurationMs);
   const ticks = useMemo(() => {
-    const step = 60_000;
-    const firstTick = Math.ceil(windowStartMs / step) * step;
-    const result: { key: string; pct: number; label: string }[] = [];
-    for (let t = firstTick; t <= windowEndMs; t += step) {
-      const pct = ((t - windowStartMs) / windowDurationMs) * 100;
-      result.push({ key: String(t), pct, label: formatDetailTick(t, windowDurationMs) });
+    const firstTick = Math.ceil(windowStartMs / tickStep) * tickStep;
+    const result: { key: number; px: number; label: string }[] = [];
+    for (let t = firstTick; t <= windowEndMs; t += tickStep) {
+      result.push({ key: t, px: (t - centerMs) / msPerPx, label: formatLensTick(t) });
     }
     return result;
-  }, [windowStartMs, windowEndMs, windowDurationMs]);
+  }, [windowStartMs, windowEndMs, tickStep, centerMs, msPerPx]);
 
-  // Per-second grid lines
+  // Minor (per-second) grid lines — only if a second is wide enough to be useful.
   const secLines = useMemo(() => {
-    const lines: { key: string; pct: number }[] = [];
+    if (lensSecPerPx > 2) return []; // no point — seconds would overlap
+    const lines: { key: number; px: number }[] = [];
     const firstSec = Math.ceil(windowStartMs / 1000) * 1000;
     for (let t = firstSec; t <= windowEndMs; t += 1000) {
-      const pct = ((t - windowStartMs) / windowDurationMs) * 100;
-      lines.push({ key: String(t), pct });
+      lines.push({ key: t, px: (t - centerMs) / msPerPx });
     }
     return lines;
-  }, [windowStartMs, windowEndMs, windowDurationMs]);
+  }, [windowStartMs, windowEndMs, centerMs, msPerPx, lensSecPerPx]);
 
   const visibleEvents = useMemo(() => {
     return events
       .map((ev) => ({ ev, ms: parseUtc(ev.t) }))
       .filter(({ ms }) => ms >= windowStartMs && ms <= windowEndMs)
-      .map(({ ev, ms }) => ({ ev, pct: toLocalPct(ms) }));
-  }, [events, windowStartMs, windowEndMs, toLocalPct]);
+      .map(({ ev, ms }) => ({ ev, px: toCenterPx(ms) }));
+  }, [events, windowStartMs, windowEndMs, toCenterPx]);
 
   const photoMarks = useMemo(() => {
     return photos
       .filter((p) => !isMidnightUtc(p.date))
       .map((p) => ({ id: p.id, ms: parseUtc(p.date) }))
       .filter(({ ms }) => ms >= windowStartMs && ms <= windowEndMs)
-      .map(({ id, ms }) => ({ key: id, pct: toLocalPct(ms) }));
-  }, [photos, windowStartMs, windowEndMs, toLocalPct]);
+      .map(({ id, ms }) => ({ key: id, px: toCenterPx(ms) }));
+  }, [photos, windowStartMs, windowEndMs, toCenterPx]);
 
   const commSegments = useMemo(() => {
     return commEntries
@@ -948,74 +984,111 @@ function MagnifierStrip({
       .map((e) => {
         const s = parseUtc(e.t);
         const end = s + e.d * 1000;
-        const cs = Math.max(s, windowStartMs);
-        const ce = Math.min(end, windowEndMs);
         return {
           key: e.t + e.text.slice(0, 8),
-          leftPct: toLocalPct(cs),
-          widthPct: Math.max(((ce - cs) / windowDurationMs) * 100, 0.2),
+          startPx: toCenterPx(s),
+          widthPx: Math.max((end - s) / msPerPx, 1),
           title: e.text,
         };
       });
-  }, [commEntries, windowStartMs, windowEndMs, windowDurationMs, toLocalPct]);
+  }, [commEntries, windowStartMs, windowEndMs, msPerPx, toCenterPx]);
+
+  // Sub-second remainder: how far the lens center sits between integer seconds,
+  // expressed in pixels. We apply this as a single transform to all per-second
+  // grid lines so the grid scrolls smoothly with sub-pixel precision. Tick
+  // labels (which carry text) are positioned individually, also via transform.
+  const halfPx = widthPx / 2;
 
   return (
-    <div className={styles.magnifier} style={{ width: `${widthPx}px` }} aria-hidden="true">
-      <div className={styles.magnifierSecGrid}>
-        {secLines.map((l) => (
-          <div key={l.key} className={styles.secLine} style={{ left: `${l.pct}%` }} />
-        ))}
-      </div>
-
-      <div className={styles.magnifierTimeAxis}>
-        {ticks.map((tick) => (
-          <div key={tick.key} className={styles.timeTick} style={{ left: `${tick.pct}%` }}>
-            <div className={styles.timeTickLine} />
-            <div className={styles.timeTickLabel}>{tick.label}</div>
+    <div
+      className={styles.magnifier}
+      style={{ width: `${widthPx}px`, ["--lens-half" as string]: `${halfPx}px` }}
+      aria-hidden="true"
+    >
+      {/* Inner content positioned in pixels relative to the lens center
+          (which sits at left: 50%). Everything inside uses transform-based
+          positioning for smooth, sub-pixel-accurate motion. */}
+      <div className={styles.magnifierInner}>
+        {/* Per-second grid lines */}
+        {secLines.length > 0 && (
+          <div className={styles.magnifierSecGrid}>
+            {secLines.map((l) => (
+              <div
+                key={l.key}
+                className={styles.magSecLine}
+                style={{ transform: `translate3d(${l.px}px, 0, 0)` }}
+              />
+            ))}
           </div>
-        ))}
+        )}
+
+        {/* Major time-axis ticks + labels */}
+        <div className={styles.magnifierTimeAxis}>
+          {ticks.map((tick) => (
+            <div
+              key={tick.key}
+              className={styles.magTimeTick}
+              style={{ transform: `translate3d(${tick.px}px, 0, 0)` }}
+            >
+              <div className={styles.magTimeTickLine} />
+              <div className={styles.magTimeTickLabel}>{tick.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Mission events */}
+        <div className={styles.magnifierEventsRow}>
+          {visibleEvents.map(({ ev, px }) => (
+            <div
+              key={ev.id}
+              className={styles.magEventMarker}
+              style={{ transform: `translate3d(${px}px, 0, 0)` }}
+              title={`${ev.name}: ${ev.description}`}
+            >
+              <div className={styles.eventDiamond} style={{ background: ev.color || "#6e9aff" }} />
+              <div className={styles.eventLine} />
+              <div className={styles.magEventLabel}>{ev.name}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Photos */}
+        <div className={styles.magnifierTrackRow}>
+          <div className={styles.trackLabelMag}>Photos</div>
+          {photoMarks.map((m) => (
+            <div
+              key={m.key}
+              className={`${styles.magTrackSegment} ${styles.trackSegmentPhoto}`}
+              style={{ transform: `translate3d(${m.px}px, 0, 0)`, width: "2px" }}
+            />
+          ))}
+        </div>
+
+        {/* Comm */}
+        <div className={styles.magnifierTrackRow}>
+          <div className={styles.trackLabelMag}>Comm</div>
+          {commSegments.map((seg) => (
+            <div
+              key={seg.key}
+              className={`${styles.magTrackSegment} ${styles.trackSegmentComm}`}
+              style={{
+                transform: `translate3d(${seg.startPx}px, 0, 0)`,
+                width: `${seg.widthPx}px`,
+              }}
+              title={seg.title}
+            />
+          ))}
+        </div>
       </div>
 
-      <div className={styles.magnifierEventsRow}>
-        {visibleEvents.map(({ ev, pct }) => (
-          <div
-            key={ev.id}
-            className={styles.eventMarker}
-            style={{ left: `${pct}%` }}
-            title={`${ev.name}: ${ev.description}`}
-          >
-            <div className={styles.eventDiamond} style={{ background: ev.color || "#6e9aff" }} />
-            <div className={styles.eventLine} />
-            <div className={styles.eventLabel}>{ev.name}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className={styles.magnifierTrackRow}>
-        <div className={styles.trackLabelMag}>Photos</div>
-        {photoMarks.map((m) => (
-          <div
-            key={m.key}
-            className={`${styles.trackSegment} ${styles.trackSegmentPhoto}`}
-            style={{ left: `${m.pct}%`, width: "2px" }}
-          />
-        ))}
-      </div>
-
-      <div className={styles.magnifierTrackRow}>
-        <div className={styles.trackLabelMag}>Comm</div>
-        {commSegments.map((seg) => (
-          <div
-            key={seg.key}
-            className={`${styles.trackSegment} ${styles.trackSegmentComm}`}
-            style={{ left: `${seg.leftPct}%`, width: `${seg.widthPct}%` }}
-            title={seg.title}
-          />
-        ))}
-      </div>
+      {/* Glass rim — sits above the content, doesn't intercept clicks */}
+      <div className={styles.magnifierRim} aria-hidden="true" />
 
       {/* Center playhead inside the lens */}
       <div className={styles.magnifierPlayhead} aria-hidden="true" />
+
+      {/* Magnification badge */}
+      <div className={styles.magnifierBadge}>{MAGNIFIER_FACTOR}×</div>
     </div>
   );
 }
@@ -1246,8 +1319,8 @@ function TimelineTest3(): JSX.Element {
   const detailSecPerPx = detailWidthPx > 0 ? windowDurationMs / 1000 / detailWidthPx : 0;
   // Show magnifier when the detail strip is coarser than 1 sec/px.
   const showMagnifier = detailSecPerPx > 1;
-  // Lens pixel width: fixed small lens (~120 px).
-  const magnifierWidthPx = 120;
+  // Lens pixel width.
+  const magnifierWidthPx = 220;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) {
@@ -1379,6 +1452,7 @@ function TimelineTest3(): JSX.Element {
           <MagnifierStrip
             centerMs={displayMs}
             widthPx={magnifierWidthPx}
+            detailSecPerPx={detailSecPerPx}
             events={itinerary.events}
             photos={photos}
             commEntries={commEntries}

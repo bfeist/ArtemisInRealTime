@@ -603,64 +603,185 @@
   color: #fb923c;
 }
 
-/* ── magnifier (Tier 3, fixed 1s/px) ──────────────────────────────── */
+/* ── magnifier (Tier 3, real magnifying glass) ────────────────────── */
 
 .detailWithMagnifier {
   position: relative;
 }
 
+/* The lens itself. Pill-shaped, with a heavy glass-like border + glow. The
+   content inside is laid out in pixels relative to the lens center, so the
+   `.magnifierInner` container provides a left:50% anchor and per-element
+   `transform: translate3d(Xpx, 0, 0)` rides smoothly with sub-pixel
+   precision (no integer-pixel "snap" you'd see with `left: X%`). */
 .magnifier {
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  height: calc(100% + 24px);
-  background: rgb(13 22 38 / 96%);
-  border: 1px solid rgb(110 154 255 / 85%);
-  border-radius: 8px;
+  height: calc(100% + 36px);
+  background:
+    radial-gradient(
+      ellipse at center,
+      rgb(18 30 50 / 92%) 0%,
+      rgb(12 20 36 / 96%) 70%,
+      rgb(8 14 26 / 98%) 100%
+    );
+  border: 1px solid rgb(140 180 255 / 90%);
+  border-radius: 999px;
   box-shadow:
-    0 0 0 3px rgb(110 154 255 / 18%),
-    0 8px 24px rgb(0 0 0 / 55%);
+    inset 0 0 12px rgb(140 180 255 / 18%),
+    inset 0 2px 6px rgb(255 255 255 / 8%),
+    0 0 0 3px rgb(110 154 255 / 20%),
+    0 0 0 5px rgb(110 154 255 / 8%),
+    0 10px 28px rgb(0 0 0 / 65%);
   pointer-events: none;
   overflow: hidden;
   z-index: 10;
-  padding: 4px 0 6px;
+  padding: 6px 0 8px;
   box-sizing: border-box;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Inner content layer — its left edge sits at the horizontal center of the
+   lens, and child elements offset themselves left or right with negative or
+   positive pixel transforms. */
+.magnifierInner {
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  bottom: 8px;
+  right: 0;
+  width: 0;
+  overflow: visible;
 }
 
 .magnifierSecGrid {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  overflow: visible;
+}
+
+.magSecLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: rgb(255 255 255 / 5%);
+  will-change: transform;
 }
 
 .magnifierTimeAxis {
   position: relative;
   height: 18px;
-  margin-top: 14px;
+  margin-top: 10px;
+  overflow: visible;
+}
+
+.magTimeTick {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  will-change: transform;
+}
+
+.magTimeTickLine {
+  width: 1px;
+  height: 6px;
+  background: rgb(141 168 196 / 70%);
+  margin-left: -0.5px; /* center the 1px line on the tick's x position */
+}
+
+.magTimeTickLabel {
+  font-size: 0.58rem;
+  color: #adc8f0;
+  white-space: nowrap;
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
 }
 
 .magnifierEventsRow {
   position: relative;
   height: 28px;
   margin-top: 4px;
+  overflow: visible;
+}
+
+.magEventMarker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.magEventLabel {
+  position: absolute;
+  bottom: 1px;
+  left: 5px;
+  font-size: 0.52rem;
+  color: #adc8f0;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .magnifierTrackRow {
   position: relative;
-  height: 14px;
-  margin-top: 6px;
+  height: 12px;
+  margin-top: 4px;
+  overflow: visible;
+}
+
+.magTrackSegment {
+  position: absolute;
+  top: 1px;
+  left: 0;
+  height: 10px;
+  border-radius: 2px;
+  min-width: 1px;
+  will-change: transform;
 }
 
 .trackLabelMag {
   position: absolute;
-  left: 4px;
+  left: 0;
   top: -1px;
   font-size: 0.55rem;
   color: #6f8aa6;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   pointer-events: none;
+  /* sit just inside the lens's left edge: center-of-inner is at left:50%,
+     so push left by half the lens width plus a small padding */
+  transform: translateX(calc(-1 * var(--lens-half) + 12px));
+  z-index: 5;
+}
+
+/* Glass rim — purely decorative inner highlight that mimics a curved lens
+   edge. Lives above content, below the playhead. */
+.magnifierRim {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse 60% 90% at 30% 25%,
+      rgb(255 255 255 / 10%) 0%,
+      rgb(255 255 255 / 0%) 60%
+    );
+  z-index: 6;
 }
 
 .magnifierPlayhead {
@@ -668,9 +789,26 @@
   left: 50%;
   top: 0;
   bottom: 0;
-  width: 2px;
+  width: 1px;
   background: #fb923c;
   transform: translateX(-50%);
   pointer-events: none;
-  box-shadow: 0 0 6px rgb(251 146 60 / 60%);
+  box-shadow: 0 0 6px rgb(251 146 60 / 70%);
+  z-index: 7;
+}
+
+.magnifierBadge {
+  position: absolute;
+  top: 4px;
+  right: 14px;
+  font-size: 0.55rem;
+  color: rgb(140 180 255 / 85%);
+  background: rgb(13 22 38 / 70%);
+  padding: 1px 5px;
+  border-radius: 99px;
+  border: 1px solid rgb(110 154 255 / 35%);
+  letter-spacing: 0.05em;
+  pointer-events: none;
+  z-index: 8;
+  font-variant-numeric: tabular-nums;
 }
