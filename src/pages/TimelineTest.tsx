@@ -598,7 +598,7 @@ function ConnectorRegion({ winLeftPct, winRightPct }: ConnectorRegionProps): JSX
         preserveAspectRatio="none"
         aria-hidden="true"
       >
-        <path d={fill} fill="rgba(14,23,38,0.55)" />
+        <path d={fill} fill="rgba(91,154,255,0.18)" />
         <path d={leftLine} fill="none" stroke="rgba(110,154,255,0.3)" strokeWidth="0.5" />
         <path d={rightLine} fill="none" stroke="rgba(110,154,255,0.3)" strokeWidth="0.5" />
       </svg>
