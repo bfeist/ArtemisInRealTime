@@ -335,6 +335,7 @@ function OverviewBar({
       ref={wrapRef}
       className={styles.overviewWrap}
       onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
         pointerActionRef.current = "seek";
         seekFromClientX(e.clientX);
       }}
@@ -458,6 +459,7 @@ function OverviewBar({
         style={{ left: `${winLeft}%` }}
         onPointerDown={(e) => {
           e.stopPropagation();
+          e.currentTarget.setPointerCapture(e.pointerId);
           pointerActionRef.current = "resize-left";
         }}
         aria-hidden="true"
@@ -467,6 +469,7 @@ function OverviewBar({
         style={{ left: `${winRight}%` }}
         onPointerDown={(e) => {
           e.stopPropagation();
+          e.currentTarget.setPointerCapture(e.pointerId);
           pointerActionRef.current = "resize-right";
         }}
         aria-hidden="true"
@@ -636,6 +639,7 @@ function DetailStrip({
       ref={wrapRef}
       className={styles.detailWrap}
       onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
         isDraggingRef.current = true;
         dragStartXRef.current = e.clientX;
         dragStartScrubMsRef.current = scrubMs;

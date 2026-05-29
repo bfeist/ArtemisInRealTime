@@ -4,6 +4,8 @@
   background: #050810;
   color: #e8e8e8;
   min-height: 100vh;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .heading {
