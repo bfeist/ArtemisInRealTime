@@ -1009,9 +1009,15 @@ function TimelineTest(): JSX.Element {
 
   const handleScrubEnd = useCallback(() => {
     isScrubbingRef.current = false;
-    setPreviewMs(null);
-    previewMsRef.current = null;
-  }, []);
+    const prev = previewMsRef.current;
+    if (prev !== null) {
+      const clamped = clamp(prev, coverageStartMs, coverageEndMs);
+      scrubMsRef.current = clamped;
+      setScrubMs(clamped);
+      setPreviewMs(null);
+      previewMsRef.current = null;
+    }
+  }, [coverageStartMs, coverageEndMs]);
 
   // ── Phases (may be in itinerary or trajectory) ─────────────────────────────
   const phases: Phase[] = itinerary?.phases ?? [];
