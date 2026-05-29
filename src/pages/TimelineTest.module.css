@@ -57,7 +57,7 @@
   background: #161c26;
   border: 1px solid #2d3e55;
   border-radius: 4px;
-  overflow: hidden;
+  overflow: visible;
   width: calc(100% + 3rem);
   margin-left: -1.5rem;
   height: 72px;
@@ -191,6 +191,40 @@
   height: 100%;
   pointer-events: none;
   overflow: visible;
+}
+
+/* magWindow grip — three-dot drag indicator for narrow windows */
+.magWindowGrip {
+  position: absolute;
+  top: -13px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  z-index: 13;
+  background: rgb(14 26 48 / 90%);
+  border: 1px solid rgb(110 154 255 / 55%);
+  border-radius: 99px;
+  width: 20px;
+  height: 8px;
+  cursor: grab;
+}
+
+.magWindowGrip:active {
+  cursor: grabbing;
+}
+
+.magWindowGrip::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgb(140 180 255 / 75%);
+  box-shadow:
+    -5px 0 0 rgb(140 180 255 / 75%),
+    5px 0 0 rgb(140 180 255 / 75%);
 }
 
 /* magWindow edge resize handles */

@@ -531,6 +531,15 @@ function OverviewBar({
         />
       </svg>
 
+      {/* magWindow grip — shown when window is very narrow */}
+      {winWidth < 3 && (
+        <div
+          className={styles.magWindowGrip}
+          style={{ left: `${winLeft + winWidth / 2}%` }}
+          aria-hidden="true"
+        />
+      )}
+
       {/* magWindow resize handles */}
       <div
         className={styles.winHandle}
