@@ -173,7 +173,8 @@ function OverviewBar({
   );
 
   const wrapRef = useRef<HTMLDivElement>(null);
-  const pointerActionRef = useRef<"idle" | "seek" | "resize-left" | "resize-right">("idle");
+  const pointerActionRef = useRef<"idle" | "seek" | "pan" | "resize-left" | "resize-right">("idle");
+  const panOffsetMsRef = useRef(0);
   const windowStartMsRef = useRef(windowStartMs);
   const windowEndMsRef = useRef(windowEndMs);
   useEffect(() => {
@@ -202,6 +203,17 @@ function OverviewBar({
       if (!el) return;
       if (action === "seek") {
         seekFromClientX(e.clientX);
+      } else if (action === "pan") {
+        const rect = el.getBoundingClientRect();
+        const clickMs =
+          coverageStartMs + clamp((e.clientX - rect.left) / rect.width, 0, 1) * totalMs;
+        const windowDur = windowEndMsRef.current - windowStartMsRef.current;
+        const newCenter = clamp(
+          clickMs - panOffsetMsRef.current,
+          coverageStartMs + windowDur / 2,
+          coverageEndMs - windowDur / 2
+        );
+        onWindowChange(newCenter, windowDur);
       } else {
         const rect = el.getBoundingClientRect();
         const ms = coverageStartMs + clamp((e.clientX - rect.left) / rect.width, 0, 1) * totalMs;
@@ -223,7 +235,7 @@ function OverviewBar({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [seekFromClientX, onWindowChange, coverageStartMs, totalMs]);
+  }, [seekFromClientX, onWindowChange, coverageStartMs, coverageEndMs, totalMs]);
 
   // Calendar-day segments
   const dateSegments = useMemo(() => {
@@ -336,8 +348,20 @@ function OverviewBar({
       className={styles.overviewWrap}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
-        pointerActionRef.current = "seek";
-        seekFromClientX(e.clientX);
+        const el = wrapRef.current;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        const clickMs =
+          coverageStartMs + clamp((e.clientX - rect.left) / rect.width, 0, 1) * totalMs;
+        if (clickMs >= windowStartMsRef.current && clickMs <= windowEndMsRef.current) {
+          // Click inside window box: drag with offset so center doesn't jump
+          const windowCenterMs = (windowStartMsRef.current + windowEndMsRef.current) / 2;
+          panOffsetMsRef.current = clickMs - windowCenterMs;
+          pointerActionRef.current = "pan";
+        } else {
+          pointerActionRef.current = "seek";
+          seekFromClientX(e.clientX);
+        }
       }}
       role="slider"
       aria-label="Mission timeline scrubber"
