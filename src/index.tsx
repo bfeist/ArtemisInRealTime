@@ -15,6 +15,7 @@ import TrajectoryTest from "./pages/TrajectoryTest.tsx";
 import TrajectoryTest2 from "./pages/TrajectoryTest2.tsx";
 import TimelineTest from "./pages/TimelineTest.tsx";
 import TimelineTest2 from "./pages/TimelineTest2.tsx";
+import TimelineTest3 from "./pages/TimelineTest3.tsx";
 import VideoTest from "./pages/VideoTest.tsx";
 
 const router = createBrowserRouter(
@@ -27,6 +28,7 @@ const router = createBrowserRouter(
       <Route path="trajectory-test2" element={<TrajectoryTest2 />} />
       <Route path="timeline-test" element={<TimelineTest />} />
       <Route path="timeline-test2" element={<TimelineTest2 />} />
+      <Route path="timeline-test3" element={<TimelineTest3 />} />
       <Route path="video-test" element={<VideoTest />} />
     </Route>
   )
