@@ -152,6 +152,9 @@ interface OverviewBarProps {
   phases: Phase[];
   onSeek: (ms: number) => void;
   onWindowChange: (newScrubMs: number, newDurationMs: number) => void;
+  previewMs?: number | null;
+  onScrubStart?: () => void;
+  onScrubEnd?: () => void;
 }
 
 function OverviewBar({
@@ -165,6 +168,9 @@ function OverviewBar({
   phases,
   onSeek,
   onWindowChange,
+  previewMs,
+  onScrubStart,
+  onScrubEnd,
 }: OverviewBarProps): JSX.Element {
   const totalMs = coverageEndMs - coverageStartMs;
   const toPercent = useCallback(
@@ -175,6 +181,10 @@ function OverviewBar({
   const wrapRef = useRef<HTMLDivElement>(null);
   const pointerActionRef = useRef<"idle" | "seek" | "pan" | "resize-left" | "resize-right">("idle");
   const panOffsetMsRef = useRef(0);
+  const onScrubEndRef = useRef(onScrubEnd);
+  useEffect(() => {
+    onScrubEndRef.current = onScrubEnd;
+  }, [onScrubEnd]);
   const windowStartMsRef = useRef(windowStartMs);
   const windowEndMsRef = useRef(windowEndMs);
   useEffect(() => {
@@ -228,6 +238,7 @@ function OverviewBar({
     };
     const onUp = () => {
       pointerActionRef.current = "idle";
+      onScrubEndRef.current?.();
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -348,6 +359,7 @@ function OverviewBar({
       className={styles.overviewWrap}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
+        onScrubStart?.();
         const el = wrapRef.current;
         if (!el) return;
         const rect = el.getBoundingClientRect();
@@ -498,6 +510,14 @@ function OverviewBar({
         }}
         aria-hidden="true"
       />
+      {/* Preview playhead (shown while drag-scrubbing during playback) */}
+      {previewMs != null && (
+        <div
+          className={styles.previewPlayhead}
+          style={{ left: `${toPercent(previewMs)}%` }}
+          aria-hidden="true"
+        />
+      )}
       {/* Playhead */}
       <div className={styles.playhead} style={{ left: `${playheadPct}%` }} aria-hidden="true" />
     </div>
@@ -553,6 +573,9 @@ interface DetailStripProps {
   onZoomIn: () => void;
   onZoomOut: () => void;
   zoomLabel: string;
+  previewMs?: number | null;
+  onScrubStart?: () => void;
+  onScrubEnd?: () => void;
 }
 
 function DetailStrip({
@@ -569,12 +592,19 @@ function DetailStrip({
   onZoomIn,
   onZoomOut,
   zoomLabel,
+  previewMs,
+  onScrubStart,
+  onScrubEnd,
 }: DetailStripProps): JSX.Element {
   const wrapRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragStartXRef = useRef(0);
   const dragStartScrubMsRef = useRef(0);
   const windowDurationMsRef = useRef(windowDurationMs);
+  const onScrubEndRef = useRef(onScrubEnd);
+  useEffect(() => {
+    onScrubEndRef.current = onScrubEnd;
+  }, [onScrubEnd]);
   useEffect(() => {
     windowDurationMsRef.current = windowDurationMs;
   }, [windowDurationMs]);
@@ -649,6 +679,7 @@ function DetailStrip({
     };
     const onUp = () => {
       isDraggingRef.current = false;
+      onScrubEndRef.current?.();
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -664,6 +695,7 @@ function DetailStrip({
       className={styles.detailWrap}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
+        onScrubStart?.();
         isDraggingRef.current = true;
         dragStartXRef.current = e.clientX;
         dragStartScrubMsRef.current = scrubMs;
@@ -751,6 +783,14 @@ function DetailStrip({
         ))}
       </div>
 
+      {/* Preview playhead (shown while drag-scrubbing during playback) */}
+      {previewMs != null && (
+        <div
+          className={styles.detailPreviewPlayhead}
+          style={{ left: `${toLocalPct(previewMs)}%` }}
+          aria-hidden="true"
+        />
+      )}
       {/* Center-line playhead */}
       <div className={styles.detailPlayhead} style={{ left: `${playheadPct}%` }} />
     </div>
@@ -833,11 +873,14 @@ function TimelineTest(): JSX.Element {
   const launchMs = itinerary ? parseUtc(itinerary.launch_utc) : 0;
 
   const [scrubMs, setScrubMs] = useState(0);
+  const [previewMs, setPreviewMs] = useState<number | null>(null);
   const [windowDurationMs, setWindowDurationMs] = useState(ZOOM_STEPS_MS[1]); // 1 day
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<Speed>(60);
 
   const scrubMsRef = useRef(0);
+  const previewMsRef = useRef<number | null>(null);
+  const isScrubbingRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const lastFrameRef = useRef(0);
 
@@ -852,10 +895,13 @@ function TimelineTest(): JSX.Element {
     }
   }, [itinerary]);
 
-  // Keep ref in sync
+  // Keep refs in sync
   useEffect(() => {
     scrubMsRef.current = scrubMs;
   }, [scrubMs]);
+  useEffect(() => {
+    previewMsRef.current = previewMs;
+  }, [previewMs]);
 
   // Playback RAF loop
   useEffect(() => {
@@ -887,10 +933,13 @@ function TimelineTest(): JSX.Element {
     windowDurationMs,
     Math.max(coverageEndMs - coverageStartMs, 1)
   );
+  // While drag-scrubbing during playback, center the view on the seek target;
+  // otherwise follow the live clock.
+  const displayMs = previewMs ?? scrubMs;
   const windowStartMs = useMemo(
     () =>
-      clamp(scrubMs - effectiveWindowMs / 2, coverageStartMs, coverageEndMs - effectiveWindowMs),
-    [scrubMs, effectiveWindowMs, coverageStartMs, coverageEndMs]
+      clamp(displayMs - effectiveWindowMs / 2, coverageStartMs, coverageEndMs - effectiveWindowMs),
+    [displayMs, effectiveWindowMs, coverageStartMs, coverageEndMs]
   );
   const windowEndMs = windowStartMs + effectiveWindowMs;
 
@@ -928,19 +977,41 @@ function TimelineTest(): JSX.Element {
   // ── Seek ──────────────────────────────────────────────────────────────────
   const handleSeek = useCallback(
     (ms: number) => {
-      setScrubMs(clamp(ms, coverageStartMs, coverageEndMs));
+      if (isScrubbingRef.current && playing) {
+        const clamped = clamp(ms, coverageStartMs, coverageEndMs);
+        setPreviewMs(clamped);
+        previewMsRef.current = clamped;
+      } else {
+        setScrubMs(clamp(ms, coverageStartMs, coverageEndMs));
+      }
     },
-    [coverageStartMs, coverageEndMs]
+    [playing, coverageStartMs, coverageEndMs]
   );
 
   // ── Window change (edge-drag resize or day-click zoom) ────────────────────
   const handleWindowChange = useCallback(
     (newScrubMs: number, newDurationMs: number) => {
-      setScrubMs(clamp(newScrubMs, coverageStartMs, coverageEndMs));
+      if (isScrubbingRef.current && playing) {
+        const clamped = clamp(newScrubMs, coverageStartMs, coverageEndMs);
+        setPreviewMs(clamped);
+        previewMsRef.current = clamped;
+      } else {
+        setScrubMs(clamp(newScrubMs, coverageStartMs, coverageEndMs));
+      }
       setWindowDurationMs(clamp(newDurationMs, MIN_WINDOW_MS, coverageEndMs - coverageStartMs));
     },
-    [coverageStartMs, coverageEndMs]
+    [playing, coverageStartMs, coverageEndMs]
   );
+
+  const handleScrubStart = useCallback(() => {
+    isScrubbingRef.current = true;
+  }, []);
+
+  const handleScrubEnd = useCallback(() => {
+    isScrubbingRef.current = false;
+    setPreviewMs(null);
+    previewMsRef.current = null;
+  }, []);
 
   // ── Phases (may be in itinerary or trajectory) ─────────────────────────────
   const phases: Phase[] = itinerary?.phases ?? [];
@@ -977,13 +1048,29 @@ function TimelineTest(): JSX.Element {
       {/* Clock strip */}
       <div className={styles.clockStrip}>
         <div className={styles.clockItem}>
-          <span className={styles.clockLabel}>UTC</span>
-          <span className={styles.clockValue}>{formatUtc(scrubMs)}</span>
+          <span className={styles.clockLabel}>{previewMs != null ? "Seeking UTC" : "UTC"}</span>
+          <span className={styles.clockValue}>{formatUtc(displayMs)}</span>
         </div>
         <div className={styles.clockItem}>
-          <span className={styles.clockLabel}>MET</span>
-          <span className={styles.clockValue}>{formatMet(launchMs, scrubMs)}</span>
+          <span className={styles.clockLabel}>{previewMs != null ? "Seeking MET" : "MET"}</span>
+          <span className={styles.clockValue}>{formatMet(launchMs, displayMs)}</span>
         </div>
+        {previewMs != null && (
+          <>
+            <div
+              className={styles.separator}
+              style={{ alignSelf: "stretch", margin: "0 0.5rem" }}
+            />
+            <div className={styles.clockItem}>
+              <span className={styles.clockLabelPreview}>Live UTC</span>
+              <span className={styles.clockValuePreview}>{formatUtc(scrubMs)}</span>
+            </div>
+            <div className={styles.clockItem}>
+              <span className={styles.clockLabelPreview}>Live MET</span>
+              <span className={styles.clockValuePreview}>{formatMet(launchMs, scrubMs)}</span>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Playback controls */}
@@ -1018,13 +1105,16 @@ function TimelineTest(): JSX.Element {
         coverageStartMs={coverageStartMs}
         coverageEndMs={coverageEndMs}
         launchMs={launchMs}
-        scrubMs={scrubMs}
+        scrubMs={displayMs}
         windowStartMs={windowStartMs}
         windowEndMs={windowEndMs}
         events={itinerary.events}
         phases={phases}
         onSeek={handleSeek}
         onWindowChange={handleWindowChange}
+        previewMs={previewMs != null ? scrubMs : null}
+        onScrubStart={handleScrubStart}
+        onScrubEnd={handleScrubEnd}
       />
 
       {/* Bezier connector region */}
@@ -1035,7 +1125,7 @@ function TimelineTest(): JSX.Element {
         windowStartMs={windowStartMs}
         windowEndMs={windowEndMs}
         windowDurationMs={windowDurationMs}
-        scrubMs={scrubMs}
+        scrubMs={displayMs}
         events={itinerary.events}
         photos={photos}
         commEntries={commEntries}
@@ -1045,6 +1135,9 @@ function TimelineTest(): JSX.Element {
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         zoomLabel={zoomLabel}
+        previewMs={previewMs != null ? scrubMs : null}
+        onScrubStart={handleScrubStart}
+        onScrubEnd={handleScrubEnd}
       />
     </div>
   );
