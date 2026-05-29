@@ -609,56 +609,80 @@
   position: relative;
 }
 
-/* The lens itself. Pill-shaped, with a heavy glass-like border + glow. The
-   content inside is laid out in pixels relative to the lens center, so the
-   `.magnifierInner` container provides a left:50% anchor and per-element
+/* The lens itself. A BULGED SQUIRCLE — wider than tall, with a gentle
+   curve across the top and a deeply bulged bottom, like an art-deco
+   reading magnifier viewed edge-on. The asymmetric `border-radius`
+   (small top corners, very large bottom corners) gives the silhouette
+   the user wants: a flatter top edge that crops just above the time-tick
+   row, with the lower half curving outward to suggest the glass bulge.
+   Width and height are set inline so the aspect ratio can be tuned
+   without touching this rule. The content inside is laid out in pixels
+   relative to the lens center; `.magnifierInner` provides the
+   left:50% / top:50% anchor, and per-element
    `transform: translate3d(Xpx, 0, 0)` rides smoothly with sub-pixel
-   precision (no integer-pixel "snap" you'd see with `left: X%`). */
+   precision (no integer-pixel "snap" you'd see with `left: X%`).
+   `--lens-half` (inline) is the X half — used by the left-edge labels. */
 .magnifier {
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -50%);
-  height: calc(100% + 36px);
-  background:
-    radial-gradient(
-      ellipse at center,
-      rgb(18 30 50 / 92%) 0%,
-      rgb(12 20 36 / 96%) 70%,
-      rgb(8 14 26 / 98%) 100%
-    );
-  border: 1px solid rgb(140 180 255 / 90%);
-  border-radius: 999px;
+  /* `translateZ(0)` promotes the lens itself to its own composited layer,
+     which makes the browser honor the rounded `overflow: hidden` clip on
+     the GPU for all descendants. Without this, descendants that have their
+     own promoted layers (anything with `will-change: transform` or a 3-arg
+     `translate3d`) can escape the rounded clip and leave "stuck" pixels
+     near the lens edge while panning. `isolation: isolate` and
+     `contain: paint` reinforce the same guarantee. */
+  transform: translate(-50%, -50%) translateZ(0);
+  isolation: isolate;
+  contain: paint;
+  background: radial-gradient(
+    ellipse at 35% 30%,
+    rgb(22 34 54) 0%,
+    rgb(13 22 38) 60%,
+    rgb(8 14 26) 100%
+  );
+  border: 1px solid rgb(140 175 220 / 75%);
+  /* Two-value border-radius (horizontal / vertical, per corner):
+       top-left  top-right  bottom-right  bottom-left
+     The top corners are mildly rounded; the bottom corners are very
+     deeply curved so the lower half reads as a bulged glass. */
+  border-radius: 28px 28px 60% 60% / 32px 32px 75% 75%;
   box-shadow:
-    inset 0 0 12px rgb(140 180 255 / 18%),
-    inset 0 2px 6px rgb(255 255 255 / 8%),
-    0 0 0 3px rgb(110 154 255 / 20%),
-    0 0 0 5px rgb(110 154 255 / 8%),
-    0 10px 28px rgb(0 0 0 / 65%);
+    inset 0 0 18px rgb(110 154 255 / 10%),
+    inset 0 -4px 10px rgb(0 0 0 / 20%),
+    0 0 0 2px rgb(110 154 255 / 10%),
+    0 10px 24px rgb(0 0 0 / 55%);
   pointer-events: none;
   overflow: hidden;
   z-index: 10;
-  padding: 6px 0 8px;
   box-sizing: border-box;
   font-variant-numeric: tabular-nums;
 }
 
-/* Inner content layer — its left edge sits at the horizontal center of the
-   lens, and child elements offset themselves left or right with negative or
-   positive pixel transforms. */
+/* Inner content layer — fills the lens. Its horizontal CENTER (left:50%)
+   is the time anchor: all children translate in pixels relative to that
+   X coordinate so they ride smoothly with sub-pixel precision. Vertically,
+   the row stack is centered with flexbox so the magnified time axis +
+   event/photo/comm rows sit at the visual middle of the circle. */
 .magnifierInner {
   position: absolute;
-  left: 50%;
-  top: 6px;
-  bottom: 8px;
-  right: 0;
-  width: 0;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   overflow: visible;
 }
 
+/* Per-second vertical grid lines — span the full lens height. Anchored at
+   the lens X center (left:50%, zero-width) so child `left:0` is the
+   time-axis origin. */
 .magnifierSecGrid {
   position: absolute;
-  inset: 0;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 0;
   pointer-events: none;
   overflow: visible;
 }
@@ -670,13 +694,20 @@
   left: 0;
   width: 1px;
   background: rgb(255 255 255 / 5%);
-  will-change: transform;
 }
+
+/* Each row below is a flex item in `.magnifierInner` (column flex). To make
+   each row's `left:0` coincide with the lens's X center (so children's
+   `transform: translate3d(Xpx, 0, 0)` rides the time axis), the row itself
+   is zero-width and `align-self: center`. Vertical layout still works
+   because the row has an explicit `height`. Rows are sized larger than the
+   detail-strip equivalents so content visibly magnifies in the Y axis. */
 
 .magnifierTimeAxis {
   position: relative;
-  height: 18px;
-  margin-top: 10px;
+  align-self: center;
+  width: 0;
+  height: 26px;
   overflow: visible;
 }
 
@@ -687,21 +718,20 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  will-change: transform;
 }
 
 .magTimeTickLine {
   width: 1px;
-  height: 6px;
-  background: rgb(141 168 196 / 70%);
+  height: 9px;
+  background: rgb(141 168 196 / 80%);
   margin-left: -0.5px; /* center the 1px line on the tick's x position */
 }
 
 .magTimeTickLabel {
-  font-size: 0.58rem;
-  color: #adc8f0;
+  font-size: 0.72rem;
+  color: #cfe0ff;
   white-space: nowrap;
-  margin-top: 2px;
+  margin-top: 3px;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
   transform: translateX(-50%);
@@ -709,8 +739,10 @@
 
 .magnifierEventsRow {
   position: relative;
-  height: 28px;
-  margin-top: 4px;
+  align-self: center;
+  width: 0;
+  height: 44px;
+  margin-top: 6px;
   overflow: visible;
 }
 
@@ -723,53 +755,68 @@
   flex-direction: column;
   align-items: center;
   pointer-events: none;
-  will-change: transform;
+  /* Scale event icons (diamond + line) up to match vertical magnification.
+     The label below still uses its own font-size override. */
+  font-size: 1.4em;
+}
+
+.magEventMarker .eventDiamond {
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg) translateY(8px);
+}
+
+.magEventMarker .eventLine {
+  width: 1px;
 }
 
 .magEventLabel {
   position: absolute;
   bottom: 1px;
-  left: 5px;
-  font-size: 0.52rem;
-  color: #adc8f0;
+  left: 7px;
+  font-size: 0.7rem;
+  color: #cfe0ff;
   white-space: nowrap;
   pointer-events: none;
 }
 
 .magnifierTrackRow {
   position: relative;
-  height: 12px;
-  margin-top: 4px;
+  align-self: center;
+  width: 0;
+  height: 18px;
+  margin-top: 6px;
   overflow: visible;
 }
 
 .magTrackSegment {
   position: absolute;
-  top: 1px;
+  top: 2px;
   left: 0;
-  height: 10px;
-  border-radius: 2px;
-  min-width: 1px;
-  will-change: transform;
+  height: 14px;
+  border-radius: 3px;
+  min-width: 2px;
 }
 
 .trackLabelMag {
   position: absolute;
   left: 0;
   top: -1px;
-  font-size: 0.55rem;
-  color: #6f8aa6;
+  font-size: 0.6rem;
+  color: #8da8c4;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   pointer-events: none;
-  /* sit just inside the lens's left edge: center-of-inner is at left:50%,
-     so push left by half the lens width plus a small padding */
-  transform: translateX(calc(-1 * var(--lens-half) + 12px));
+  /* Sit just inside the lens's left edge: this element's `left:0` is the
+     lens X center (its row is align-self:center, width:0), so push left
+     by half the lens diameter plus a small inset. */
+  transform: translateX(calc(-1 * var(--lens-half) + 14px));
   z-index: 5;
 }
 
-/* Glass rim — purely decorative inner highlight that mimics a curved lens
-   edge. Lives above content, below the playhead. */
+/* Glass rim — purely decorative, intentionally subtle so it doesn't drown
+   out the magnified content beneath. A faint upper-left highlight + a soft
+   outer-rim vignette is enough to read as "glass". */
 .magnifierRim {
   position: absolute;
   inset: 0;
@@ -777,9 +824,16 @@
   pointer-events: none;
   background:
     radial-gradient(
-      ellipse 60% 90% at 30% 25%,
-      rgb(255 255 255 / 10%) 0%,
-      rgb(255 255 255 / 0%) 60%
+      ellipse at 30% 25%,
+      rgb(255 255 255 / 8%) 0%,
+      rgb(255 255 255 / 2%) 20%,
+      rgb(255 255 255 / 0%) 45%
+    ),
+    radial-gradient(
+      ellipse at center,
+      rgb(0 0 0 / 0%) 60%,
+      rgb(0 0 0 / 10%) 90%,
+      rgb(0 0 0 / 20%) 100%
     );
   z-index: 6;
 }
@@ -797,18 +851,38 @@
   z-index: 7;
 }
 
+/* Magnification badge — clickable button that cycles the lens magnification
+   factor (e.g. 5× → 10× → 20× → 5× …). Sits near the bottom of the lens.
+   `pointer-events: auto` overrides the lens's `pointer-events: none`. */
 .magnifierBadge {
   position: absolute;
-  top: 4px;
-  right: 14px;
-  font-size: 0.55rem;
-  color: rgb(140 180 255 / 85%);
-  background: rgb(13 22 38 / 70%);
-  padding: 1px 5px;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font: inherit;
+  font-size: 0.62rem;
+  color: rgb(170 200 255 / 95%);
+  background: rgb(13 22 38 / 80%);
+  padding: 2px 9px;
   border-radius: 99px;
-  border: 1px solid rgb(110 154 255 / 35%);
+  border: 1px solid rgb(110 154 255 / 45%);
   letter-spacing: 0.05em;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
   z-index: 8;
   font-variant-numeric: tabular-nums;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.magnifierBadge:hover {
+  background: rgb(20 34 56 / 90%);
+  border-color: rgb(140 180 255 / 70%);
+  color: #e6efff;
+}
+
+.magnifierBadge:active {
+  background: rgb(28 46 74 / 95%);
 }

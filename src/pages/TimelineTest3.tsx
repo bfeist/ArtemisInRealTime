@@ -870,26 +870,36 @@ function DetailStrip({
 }
 
 // ---- MagnifierStrip ---------------------------------------------------------
-// Behaves like a real magnifying glass: a fixed-pixel-width circular-ish lens
-// centered over the DetailStrip's playhead. It samples the slice of the
-// underlying detail strip directly beneath the lens and renders it scaled up
-// by a fixed magnification factor (MAGNIFICATION). So:
+// Behaves like a real hand-held magnifying glass: a fixed-size OVAL lens
+// (widthPx × heightPx, wider than tall) centered over the DetailStrip's
+// playhead that magnifies BOTH axes — time (X) and the row stack (Y).
+// Time is magnified by computing pixel positions at the magnified scale;
+// the Y axis is magnified by giving the lens's interior larger row heights
+// / fonts / icons than the underlying detail strip, so an event diamond /
+// photo tick / comm bar all visibly grow as they enter the lens.
 //
 //   detailSecPerPx              — seconds-per-pixel of the strip beneath
-//   lensSecPerPx  = detailSecPerPx / MAGNIFICATION
+//   lensSecPerPx  = detailSecPerPx / factor
 //   lensTimeSpan  = widthPx * lensSecPerPx * 1000
 //
 // All tick / event / photo / comm positions are computed in *pixels relative
 // to the lens center*, then everything inside the lens rides on a single
 // CSS `transform: translate3d(...)` so sub-pixel motion is smooth (no
 // integer-pixel snap that you'd see with `left: X%`).
+//
+// The magnification factor is owned by the parent and cycled by clicking
+// the badge in the bottom of the lens.
 
-const MAGNIFIER_FACTOR = 12; // how many × the underlying strip is enlarged
+const MAGNIFIER_FACTORS = [5, 10, 20] as const;
+type MagnifierFactor = (typeof MAGNIFIER_FACTORS)[number];
 const MIN_LENS_SEC_PER_PX = 0.05; // never finer than 50ms/px (avoids absurd zooms)
 
 interface MagnifierStripProps {
   centerMs: number;
-  widthPx: number;
+  widthPx: number; // oval lens — horizontal radius * 2
+  heightPx: number; // oval lens — vertical radius * 2
+  factor: MagnifierFactor; // current magnification (5×, 10×, or 20×)
+  onCycleFactor: () => void; // called when the user clicks the badge
   detailSecPerPx: number; // seconds-per-pixel of the strip beneath
   events: MissionEvent[];
   photos: Photo[];
@@ -918,13 +928,16 @@ function formatLensTick(ms: number): string {
 function MagnifierStrip({
   centerMs,
   widthPx,
+  heightPx,
+  factor,
+  onCycleFactor,
   detailSecPerPx,
   events,
   photos,
   commEntries,
 }: MagnifierStripProps): JSX.Element {
   // Seconds per pixel inside the lens (always finer than the strip beneath).
-  const lensSecPerPx = Math.max(detailSecPerPx / MAGNIFIER_FACTOR, MIN_LENS_SEC_PER_PX);
+  const lensSecPerPx = Math.max(detailSecPerPx / factor, MIN_LENS_SEC_PER_PX);
   const msPerPx = lensSecPerPx * 1000;
   const lensDurationMs = widthPx * msPerPx;
   const halfMs = lensDurationMs / 2;
@@ -993,30 +1006,38 @@ function MagnifierStrip({
       });
   }, [commEntries, windowStartMs, windowEndMs, msPerPx, toCenterPx]);
 
-  // Sub-second remainder: how far the lens center sits between integer seconds,
-  // expressed in pixels. We apply this as a single transform to all per-second
-  // grid lines so the grid scrolls smoothly with sub-pixel precision. Tick
-  // labels (which carry text) are positioned individually, also via transform.
+  // Half-width used by CSS (`--lens-half`) to place the row labels at the
+  // lens's left edge.
   const halfPx = widthPx / 2;
 
   return (
     <div
       className={styles.magnifier}
-      style={{ width: `${widthPx}px`, ["--lens-half" as string]: `${halfPx}px` }}
-      aria-hidden="true"
+      style={{
+        width: `${widthPx}px`,
+        height: `${heightPx}px`,
+        ["--lens-half" as string]: `${halfPx}px`,
+      }}
     >
       {/* Inner content positioned in pixels relative to the lens center
           (which sits at left: 50%). Everything inside uses transform-based
           positioning for smooth, sub-pixel-accurate motion. */}
       <div className={styles.magnifierInner}>
-        {/* Per-second grid lines */}
+        {/* Per-second grid lines. NOTE: we use a 2D `translate(Xpx, 0)`
+            here rather than `translate3d(Xpx, 0, 0)`. translate3d implicitly
+            promotes each element to its own composited GPU layer, and on
+            many browsers such layers can escape the lens's rounded-corner
+            `overflow: hidden` clip — leaving "stuck" pixel artifacts near
+            the lens edge as you pan. The parent `.magnifier` is the only
+            promoted layer; that's enough to keep motion smooth without
+            breaking the rounded clip. */}
         {secLines.length > 0 && (
           <div className={styles.magnifierSecGrid}>
             {secLines.map((l) => (
               <div
                 key={l.key}
                 className={styles.magSecLine}
-                style={{ transform: `translate3d(${l.px}px, 0, 0)` }}
+                style={{ transform: `translate(${l.px}px, 0)` }}
               />
             ))}
           </div>
@@ -1028,7 +1049,7 @@ function MagnifierStrip({
             <div
               key={tick.key}
               className={styles.magTimeTick}
-              style={{ transform: `translate3d(${tick.px}px, 0, 0)` }}
+              style={{ transform: `translate(${tick.px}px, 0)` }}
             >
               <div className={styles.magTimeTickLine} />
               <div className={styles.magTimeTickLabel}>{tick.label}</div>
@@ -1042,7 +1063,7 @@ function MagnifierStrip({
             <div
               key={ev.id}
               className={styles.magEventMarker}
-              style={{ transform: `translate3d(${px}px, 0, 0)` }}
+              style={{ transform: `translate(${px}px, 0)` }}
               title={`${ev.name}: ${ev.description}`}
             >
               <div className={styles.eventDiamond} style={{ background: ev.color || "#6e9aff" }} />
@@ -1059,7 +1080,7 @@ function MagnifierStrip({
             <div
               key={m.key}
               className={`${styles.magTrackSegment} ${styles.trackSegmentPhoto}`}
-              style={{ transform: `translate3d(${m.px}px, 0, 0)`, width: "2px" }}
+              style={{ transform: `translate(${m.px}px, 0)`, width: "2px" }}
             />
           ))}
         </div>
@@ -1072,7 +1093,7 @@ function MagnifierStrip({
               key={seg.key}
               className={`${styles.magTrackSegment} ${styles.trackSegmentComm}`}
               style={{
-                transform: `translate3d(${seg.startPx}px, 0, 0)`,
+                transform: `translate(${seg.startPx}px, 0)`,
                 width: `${seg.widthPx}px`,
               }}
               title={seg.title}
@@ -1087,8 +1108,21 @@ function MagnifierStrip({
       {/* Center playhead inside the lens */}
       <div className={styles.magnifierPlayhead} aria-hidden="true" />
 
-      {/* Magnification badge */}
-      <div className={styles.magnifierBadge}>{MAGNIFIER_FACTOR}×</div>
+      {/* Magnification badge — click to cycle through 5× / 10× / 20× */}
+      <button
+        type="button"
+        className={styles.magnifierBadge}
+        onClick={onCycleFactor}
+        onPointerDown={(e) => {
+          // The detail strip beneath uses pointerdown to start a pan drag;
+          // swallow it here so clicking the badge doesn't also start a pan.
+          e.stopPropagation();
+        }}
+        title="Click to cycle magnification (5× / 10× / 20×)"
+        aria-label={`Magnification ${factor}×. Click to cycle.`}
+      >
+        {factor}×
+      </button>
     </div>
   );
 }
@@ -1319,8 +1353,20 @@ function TimelineTest3(): JSX.Element {
   const detailSecPerPx = detailWidthPx > 0 ? windowDurationMs / 1000 / detailWidthPx : 0;
   // Show magnifier when the detail strip is coarser than 1 sec/px.
   const showMagnifier = detailSecPerPx > 1;
-  // Lens pixel width.
-  const magnifierWidthPx = 220;
+  // Bulged-squircle lens dimensions — wider than tall, cropped tight at
+  // the top so the silhouette sits just above the time-tick row, with a
+  // deeply curved bottom (see border-radius in `.magnifier`).
+  const magnifierWidthPx = 320;
+  const magnifierHeightPx = 150;
+  // Current magnification factor; default 20×. Clicking the badge cycles
+  // 20 → 5 → 10 → 20 …
+  const [magnifierFactor, setMagnifierFactor] = useState<MagnifierFactor>(20);
+  const cycleMagnifierFactor = useCallback(() => {
+    setMagnifierFactor((prev) => {
+      const idx = MAGNIFIER_FACTORS.indexOf(prev);
+      return MAGNIFIER_FACTORS[(idx + 1) % MAGNIFIER_FACTORS.length];
+    });
+  }, []);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) {
@@ -1452,6 +1498,9 @@ function TimelineTest3(): JSX.Element {
           <MagnifierStrip
             centerMs={displayMs}
             widthPx={magnifierWidthPx}
+            heightPx={magnifierHeightPx}
+            factor={magnifierFactor}
+            onCycleFactor={cycleMagnifierFactor}
             detailSecPerPx={detailSecPerPx}
             events={itinerary.events}
             photos={photos}
