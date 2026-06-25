@@ -63,6 +63,14 @@ def build_web_comm(mission: MissionConfig) -> None:
     tz_delta = timedelta(hours=mission.comm_tz_offset_hours)
 
     for json_path in sorted(transcript_dir.rglob("*.json")):
+        # Skip Mission Audio transcripts — analysis showed ~89% of their content
+        # is already captured by the YT/PAO stream (PAO.csv via step 2k) or by
+        # the OE Comp recordings already in comm.csv.  Only ~11% is unique, and
+        # that content is PAO-style narration rather than crew-ground comm.
+        # Mission Audio is processed separately by step 1b2 and intentionally
+        # excluded here to avoid flooding comm.csv with duplicate PAO content.
+        if "MISSION_AUDIO" in json_path.name:
+            continue
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 

@@ -139,9 +139,15 @@ def parse_wav_timestamp(filename: str, tz_offset_hours: float = 0.0) -> dt.datet
 
 
 def collect_wav_files(comm_dir: Path, tz_offset_hours: float = 0.0) -> list[tuple[Path, dt.datetime]]:
-    """Collect all WAV files with parsed timestamps, sorted chronologically."""
+    """Collect all OE Comp WAV files with parsed timestamps, sorted chronologically.
+
+    Directories whose names contain "Artemis II Mission Audio" are skipped —
+    those are processed by step 1b2 (1b2_transcribe_mission_audio.py).
+    """
     results = []
-    for dirpath, _dirs, files in os.walk(comm_dir):
+    for dirpath, dirs, files in os.walk(comm_dir):
+        # Skip Mission Audio extraction folders in-place so os.walk doesn't descend
+        dirs[:] = [d for d in dirs if "Artemis II Mission Audio" not in d]
         for f in files:
             if not f.lower().endswith(".wav"):
                 continue
