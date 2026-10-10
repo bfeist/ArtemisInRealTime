@@ -22,6 +22,7 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 DATA_DIR = Path(os.environ.get("DATA_DIR", REPO_ROOT.parent / "ArtemisInRealTime_assets"))
 YT_VIDEO_DIR = Path(os.environ.get("YT_VIDEO_DIR", "H:/ArtemisInRealTime_yt_videos"))
 VIDEO_ASSETS_DIR = Path(os.environ.get("VIDEO_ASSETS_DIR", "D:/ArtemisInRealTime_assets/videos"))
+PDS_ASSETS_DIR = Path(os.environ.get("PDS_ASSETS_DIR", "D:/ArtemisInRealTime_assets"))
 
 # Crew raw imagery (NEF + DNG) lives outside the per-mission tree until disk
 # space is freed and they're moved into mission.photos_raw_crew. The legacy D:
@@ -102,6 +103,23 @@ class MissionConfig:
     @property
     def data_dir(self) -> Path:
         return DATA_DIR / self.slug
+
+    @property
+    def pds_raw(self) -> Path:
+        return PDS_ASSETS_DIR / self.slug / "raw" / "pds"
+
+    @property
+    def pds_processed(self) -> Path:
+        return PDS_ASSETS_DIR / self.slug / "processed" / "pds"
+
+    @property
+    def pds_staging(self) -> Path:
+        return PDS_ASSETS_DIR / self.slug / "staging" / "pds"
+
+    @property
+    def pds_inventory_roots(self) -> list[Path]:
+        return list(dict.fromkeys([PDS_ASSETS_DIR, self.data_dir, CREW_RAW_SOURCE_DIR,
+                                  PHOTO_ASSETS_DIR, VIDEO_ASSETS_DIR, self.yt_video_dir]))
 
     @property
     def raw_video_ia(self) -> Path:

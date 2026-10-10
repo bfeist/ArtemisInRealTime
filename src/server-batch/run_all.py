@@ -32,6 +32,10 @@ from config import MISSIONS
 # Named step groups — expand before individual step resolution.
 # These are the most common multi-step workflows.
 STEP_GROUPS: dict[str, list[str]] = {
+    "pds-plan": ["7a", "7b", "7c", "7g"],
+    "pds-fetch": ["7d", "7e", "7g"],
+    "pds-integrate": ["7f", "4a", "4b", "4c", "4d", "4e", "7g"],
+    "pds-refresh": ["7a", "7b", "7c", "7d", "7e", "7f", "4a", "4b", "4c", "4d", "4e", "7g"],
     # Re-check all external photo sources for new arrivals, download them,
     # and rebuild the ledger + web tiers + photos.json.
     # All download steps are idempotent — safe to re-run at any time.
@@ -79,6 +83,13 @@ STEPS = [
     ("5b", "5_trajectory.5b_moon_ephemeris",  "Compute geocentric Moon at every Orion sample", None),
     ("5c", "5_trajectory.5c_web_trajectory",  "Emit web/ephemeris/trajectory.json", None),
     ("6a", "6_itinerary.6a_web_itinerary",   "Emit web/itinerary.json",  None),
+    ("7a", "7_pds.7a_discover", "Discover complete public PDS bundles", {"artemis-ii"}),
+    ("7b", "7_pds.7b_inventory_local", "Inventory local PDS candidates and ZIPs", {"artemis-ii"}),
+    ("7c", "7_pds.7c_reconcile", "Verify reuse and save PDS transfer plan", {"artemis-ii"}),
+    ("7d", "7_pds.7d_download", "Resume and verify PDS retrieval on D:", {"artemis-ii"}),
+    ("7e", "7_pds.7e_verify", "Verify PDS labels, inventories and coverage", {"artemis-ii"}),
+    ("7f", "7_pds.7f_integrate", "Build verified PDS media/science catalogs", {"artemis-ii"}),
+    ("7g", "7_pds.7g_report", "Report PDS completeness and pending releases", {"artemis-ii"}),
 ]
 
 
@@ -144,7 +155,7 @@ def main():
             print(f"  {step_id:6s} {desc} {status}")
         print(f"\nNamed step groups:")
         for group, members in STEP_GROUPS.items():
-            print(f"  {group:20s} → {' '.join(members)}")
+            print(f"  {group:20s} -> {' '.join(members)}")
         return
 
     mission.ensure_dirs()
@@ -168,7 +179,8 @@ def main():
             sys.exit(1)
         steps_to_run = [(s, m, d, a) for sid in requested for s, m, d, a in STEPS if s == sid]
     else:
-        steps_to_run = STEPS
+        # Multi-terabyte retrieval requires an explicit PDS step/group selection.
+        steps_to_run = [s for s in STEPS if not s[0].startswith("7")]
 
     # Filter by mission applicability
     steps_to_run = [
@@ -187,6 +199,9 @@ def main():
     for step_id, module_path, description, _ in steps_to_run:
         ok = run_step(step_id, module_path, description, args.mission)
         results.append((step_id, ok))
+        if not ok and step_id.startswith("7"):
+            run_step("7g", "7_pds.7g_report", "Report incomplete PDS run", args.mission)
+            break
 
     elapsed = time.time() - start
 

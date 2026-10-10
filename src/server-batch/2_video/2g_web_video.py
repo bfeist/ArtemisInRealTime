@@ -17,6 +17,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import MISSIONS, MissionConfig
 
 
+def build_web_video_pds(mission: MissionConfig) -> None:
+    """Expose each verified PDS channel/version without changing IA/YT catalogs."""
+    from urllib.parse import quote
+    from shared.pds import atomic_json
+    catalog = mission.data_dir / "processed" / "pds" / "video.jsonl"
+    if not catalog.exists():
+        return
+    entries = []
+    for line in catalog.read_text(encoding="utf-8").splitlines():
+        record = json.loads(line)
+        entries.append({"id": record.get("lidvid") or record["uri"], "source": "pds",
+            "title": Path(record["path"]).stem, "nasaId": record.get("nasa_id"), "channel": record.get("channel"),
+            "startTime": record.get("start_utc") or "", "endTime": record.get("stop_utc") or "",
+            "duration": record.get("duration_seconds"), "codec": record.get("codec"),
+            "sourceUrl": "https://pds-imaging.jpl.nasa.gov/api/data/" + quote(record["uri"], safe=":/"),
+            "localUrl": "/pds-assets/" + quote(record["bundle"] + "/" + record["relative"], safe="/"),
+            "assurance": record["assurance"]})
+    entries.sort(key=lambda e: (e["startTime"], e["channel"] or "", e["id"]))
+    atomic_json(mission.web_dir / "videoPDS.json", entries)
+    print(f"  Saved {len(entries)} PDS video entries to {mission.web_dir / 'videoPDS.json'}")
+
+
 def build_web_video_ia(mission: MissionConfig) -> None:
     """Build web-ready IA video JSON from ia_video_metadata.json (step 2f)."""
     meta_path = mission.data_dir / "processed" / "ia_video_metadata.json"
@@ -97,6 +119,7 @@ def main():
     print(f"\n=== Step 2g: Web Video JSON — {mission.name} ===\n")
     build_web_video_ia(mission)
     build_web_video_yt(mission)
+    build_web_video_pds(mission)
 
 
 if __name__ == "__main__":

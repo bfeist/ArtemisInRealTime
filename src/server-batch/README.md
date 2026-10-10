@@ -186,3 +186,11 @@ To upgrade all packages:
 ```bash
 uv lock --upgrade && uv sync
 ```
+
+## PDS science release
+
+See [7_pds/README.md](7_pds/README.md) for complete, resumable Artemis II PDS
+retrieval. `PDS_ASSETS_DIR` defaults to `D:/ArtemisInRealTime_assets` independently
+of existing pipeline/web assets. Use the explicit `pds-plan`, `pds-fetch`,
+`pds-integrate`, or `pds-refresh` runner groups. The long-running retrieval entry
+point is `python -u -m 7_pds.retrieve --mission artemis-ii`.

@@ -334,9 +334,14 @@ def extract_all(mission: MissionConfig) -> None:
             + (f"  [dim]({dir_})[/dim]" if not dir_.exists() else "")
         )
 
-    raw_work, raw_skipped = _scan_source(
-        "raw_crew", raw_crew_dir, _RAW_EXTS, exif_dir, recursive=True
-    )
+    from shared.pds_photos import crew_sources
+    raw_work, raw_skipped = [], 0
+    for nid, path in crew_sources(mission).items():
+        dest = exif_dir / "raw_crew" / f"{nid}.json"
+        if _needs_extraction(path, dest):
+            raw_work.append((path, dest))
+        else:
+            raw_skipped += 1
     plan["raw_crew"] = raw_work
     skipped_total += raw_skipped
     console.print(

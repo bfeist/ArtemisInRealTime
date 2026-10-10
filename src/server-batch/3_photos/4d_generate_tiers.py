@@ -75,7 +75,12 @@ DEFAULT_WORKERS = 4
 # ── Loaders ─────────────────────────────────────────────────────────────────
 
 
-def _pick_source(rec: LedgerRecord) -> tuple[str, Path] | None:
+def _pick_source(rec: LedgerRecord, prefer_pds_processed: bool = False) -> tuple[str, Path] | None:
+    if prefer_pds_processed:
+        for product in sorted(rec.pds_products, key=lambda p: p["path"], reverse=True):
+            path = Path(product["path"])
+            if product.get("role") == "data_processed" and product.get("assurance") == "verified" and path.suffix.lower() in {".tif", ".tiff"}:
+                return "pds_processed", path
     for src in SOURCE_PRIORITY:
         copy = rec.copies.get(src)
         if copy and copy.path:
@@ -143,6 +148,15 @@ def _source_jpeg_bytes(source: str, path: Path) -> bytes:
     embedded full-resolution JPEG preview from the NEF/DNG. For all other
     sources, returns the file contents directly.
     """
+    if source == "pds_processed":
+        import io
+        from PIL import Image
+        with Image.open(path) as img:
+            if img.mode not in {"RGB", "RGBA", "L"}:
+                raise ValueError(f"Processed TIFF mode {img.mode} needs an explicit display mapping")
+            output = io.BytesIO()
+            img.convert("RGB").save(output, format="JPEG", quality=95)
+            return output.getvalue()
     if source == "raw_crew":
         import subprocess
         exiftool = _resolve_exiftool()
@@ -252,7 +266,7 @@ def _in_window(rec, win_start: date, win_end: date) -> bool:
     return win_start <= d <= win_end
 
 
-def generate_tiers(mission: MissionConfig, workers: int) -> None:
+def generate_tiers(mission: MissionConfig, workers: int, prefer_pds_processed: bool = False) -> None:
     ledger = load_ledger(mission.photos_ledger_path)
     if not ledger:
         console.print(
@@ -275,7 +289,7 @@ def generate_tiers(mission: MissionConfig, workers: int) -> None:
         if not _in_window(rec, win_start, win_end):
             outside_window += 1
             continue
-        pick = _pick_source(rec)
+        pick = _pick_source(rec, prefer_pds_processed)
         if pick is None:
             no_source += 1
             continue
@@ -348,6 +362,7 @@ def generate_tiers(mission: MissionConfig, workers: int) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Generate web tier JPEGs")
     parser.add_argument("--mission", required=True, choices=list(MISSIONS.keys()))
+    parser.add_argument("--prefer-pds-processed", action="store_true", help="Select verified processed RGB PDS TIFFs; Bayer raw TIFFs are excluded")
     parser.add_argument(
         "--workers", type=int, default=DEFAULT_WORKERS,
         help=f"Worker threads (default {DEFAULT_WORKERS}). NEF decode is CPU-bound.",
@@ -358,7 +373,7 @@ def main():
     mission.ensure_dirs()
 
     console.print(f"\n[bold]=== Step 4d: Generate web tiers — {mission.name} ===[/bold]\n")
-    generate_tiers(mission, workers=args.workers)
+    generate_tiers(mission, workers=args.workers, prefer_pds_processed=args.prefer_pds_processed)
 
 
 if __name__ == "__main__":

@@ -82,6 +82,8 @@ class LedgerRecord:
     # Verbatim IO record when IO has it. Useful for debugging the merge;
     # the web build doesn't read it.
     io: dict = field(default_factory=dict)
+    pds_products: list[dict] = field(default_factory=list)
+    pds_time_conflicts: list[str] = field(default_factory=list)
 
     # ── helpers ──────────────────────────────────────────────────────────
 
@@ -126,6 +128,8 @@ def _record_from_jsonable(d: dict) -> LedgerRecord:
         copies=copies,
         bracket=bracket,
         io=d.get("io", {}) or {},
+        pds_products=d.get("pds_products", []),
+        pds_time_conflicts=d.get("pds_time_conflicts", []),
     )
 
 

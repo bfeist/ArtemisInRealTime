@@ -561,20 +561,18 @@ def _add_raw_crew(
 ) -> int:
     """3. Crew raws — file presence does NOT imply exported. We just attach
     the path; the export flag stays whatever the public sources set it to."""
-    src_dir = primary_dir
-    if not src_dir.exists() or not any(src_dir.iterdir()):
-        if fallback_dir.exists():
-            src_dir = fallback_dir
-    if not src_dir.exists():
-        return 0
     n = 0
-    # Walk recursively — the legacy D: dump has subfolders.
-    for f in src_dir.rglob("*"):
-        if f.is_file() and f.suffix.lower() in (".nef", ".dng"):
-            nid = f.stem.lower()
-            rec = records.setdefault(nid, LedgerRecord(nasa_id=nid))
-            rec.copies["raw_crew"] = Copy(path=str(f))
-            n += 1
+    from shared.pds import nasa_id
+    for src_dir in (primary_dir, fallback_dir):
+        if not src_dir.exists():
+            continue
+        for f in sorted(src_dir.rglob("*")):
+            if f.is_file() and f.suffix.lower() in (".nef", ".dng"):
+                nid = nasa_id(f.name) or f.stem.lower()
+                rec = records.setdefault(nid, LedgerRecord(nasa_id=nid))
+                if not rec.copies.get("raw_crew"):
+                    rec.copies["raw_crew"] = Copy(path=str(f))
+                    n += 1
     return n
 
 
@@ -889,6 +887,8 @@ def build_ledger(mission: MissionConfig) -> None:
     console.print(f"  Bracket members:   [cyan]{bracket_attached:>6}[/cyan] frames")
 
     # 7. Cleanup + write
+    from shared.pds_photos import merge_pds_photos
+    merge_pds_photos(records, mission.data_dir / "processed" / "pds" / "photos.jsonl", mission.exif_cache_dir)
     _strip_internal_io_keys(records.values())
     n = save_ledger(mission.photos_ledger_path, records.values())
     console.print(f"\n  [green]Wrote {n:,} records -> {mission.photos_ledger_path}[/green]")
