@@ -29,7 +29,7 @@ def find_zip_files(files: list[dict]) -> list[dict]:
     return [f for f in files if f.get("name", "").lower().endswith(".zip")]
 
 
-def download_comm(mission: MissionConfig) -> None:
+def download_comm(mission: MissionConfig, catalog_only: bool = False) -> None:
     if not mission.ia_comm_collection:
         print(f"  No comm collection configured for {mission.name}. Skipping.")
         return
@@ -39,6 +39,16 @@ def download_comm(mission: MissionConfig) -> None:
     files = get_item_files(ident)
     zips = find_zip_files(files)
     print(f"  Found {len(zips)} ZIP files in {len(files)} total files")
+    from shared.ia_video_downloads import atomic_json
+    records = [{"filename": f["name"], "size": int(f.get("size") or 0),
+                "public_url": f"{IA_DOWNLOAD_URL}/{ident}/{f['name']}",
+                "path": str(mission.raw_comm / f["name"]),
+                "status": "held" if (mission.raw_comm / f["name"]).is_file() else "missing"}
+               for f in zips]
+    atomic_json(mission.data_dir / "processed" / "comm_source.json", {"item": ident, "records": records})
+    if catalog_only:
+        print(f"  Catalog only: {sum(r['status'] == 'missing' for r in records)} ZIPs missing locally")
+        return
 
     if not zips:
         print(f"  No ZIP files found.")
@@ -86,13 +96,14 @@ def main():
         required=True,
         choices=list(MISSIONS.keys()),
     )
+    parser.add_argument("--catalog-only", action="store_true", help="Check for new public comm ZIPs without downloading")
     args = parser.parse_args()
 
     mission = MISSIONS[args.mission]
     mission.ensure_dirs()
 
     print(f"\n=== Step 1a: Comm Download — {mission.name} ===\n")
-    download_comm(mission)
+    download_comm(mission, catalog_only=args.catalog_only)
 
 
 if __name__ == "__main__":

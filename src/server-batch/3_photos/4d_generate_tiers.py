@@ -83,8 +83,15 @@ def _pick_source(rec: LedgerRecord, prefer_pds_processed: bool = False) -> tuple
                 return "pds_processed", path
     for src in SOURCE_PRIORITY:
         copy = rec.copies.get(src)
-        if copy and copy.path:
+        if copy and copy.path and Path(copy.path).is_file():
             return src, Path(copy.path)
+    # Public PDS browse products can fill gaps without decoding scientific Bayer TIFFs.
+    for product in rec.pds_products:
+        path = Path(product["path"])
+        if (product.get("assurance", "").startswith("verified")
+                and product.get("role", "").startswith("browse")
+                and path.suffix.lower() in {".jpg", ".jpeg", ".png"} and path.is_file()):
+            return "pds_browse", path
     return None
 
 
@@ -158,6 +165,8 @@ def _source_jpeg_bytes(source: str, path: Path) -> bytes:
             img.convert("RGB").save(output, format="JPEG", quality=95)
             return output.getvalue()
     if source == "raw_crew":
+        if path.suffix.lower() in {".jpg", ".jpeg"}:
+            return path.read_bytes()
         import subprocess
         exiftool = _resolve_exiftool()
         res = subprocess.run(
@@ -170,6 +179,15 @@ def _source_jpeg_bytes(source: str, path: Path) -> bytes:
                 f"rc={res.returncode}, stderr={res.stderr[:200]!r}"
             )
         return res.stdout
+    if path.suffix.lower() not in {".jpg", ".jpeg"}:
+        import io
+        from PIL import Image
+        with Image.open(path) as img:
+            if img.mode not in {"RGB", "RGBA", "L", "P"}:
+                raise ValueError(f"Image mode {img.mode} needs an explicit display mapping")
+            output = io.BytesIO()
+            img.convert("RGB").save(output, format="JPEG", quality=95)
+            return output.getvalue()
     return path.read_bytes()
 
 
@@ -357,6 +375,7 @@ def generate_tiers(mission: MissionConfig, workers: int, prefer_pds_processed: b
             console.print(f"    [red]{nid}[/red]: {err}")
         if len(failed) > 10:
             console.print(f"    … and {len(failed) - 10} more")
+        raise RuntimeError(f"Web tier generation failed for {len(failed)} photos")
 
 
 def main():

@@ -29,7 +29,7 @@ from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import MISSIONS, CREW_RAW_SOURCE_DIR, MissionConfig
+from config import MISSIONS, MissionConfig
 from shared.eol_naming import to_canonical_nasa_id
 
 console = Console()
@@ -37,12 +37,11 @@ console = Console()
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 def _resolve_raw_dir(mission: MissionConfig) -> Path:
-    """Prefer the per-mission raw_crew dir if it has files; fall back to the
-    legacy CREW_RAW_SOURCE_DIR drop while the migration is in progress."""
+    """Prefer processing originals; otherwise use this mission's bulk tree."""
     new_loc = mission.photos_raw_crew
     if new_loc.exists() and any(new_loc.iterdir()):
         return new_loc
-    return CREW_RAW_SOURCE_DIR
+    return mission.photos_bulk_crew
 
 
 def collect_raw_ids(raw_dir: Path) -> set[str]:

@@ -3,8 +3,11 @@ $ErrorActionPreference = 'Stop'
 $batchDir = Split-Path -Parent $PSScriptRoot
 $pythonExe = Join-Path $batchDir '.venv/Scripts/python.exe'
 if (-not (Test-Path -LiteralPath $pythonExe)) { throw "Python environment is missing: $pythonExe" }
-$pdsRoot = if ($env:PDS_ASSETS_DIR) { $env:PDS_ASSETS_DIR } else { 'D:/ArtemisInRealTime_assets' }
-$logDir = Join-Path $pdsRoot 'artemis-ii/processed/pds/logs'
+$storage = & $pythonExe -c "import sys; sys.path.insert(0, sys.argv[1]); import json; from config import PDS_ASSETS_DIR, MISSIONS; print(json.dumps({'root': str(PDS_ASSETS_DIR), 'logs': str(MISSIONS['artemis-ii'].pds_processed / 'logs')}))" $batchDir
+if ($LASTEXITCODE -ne 0) { throw 'Could not read pipeline storage configuration' }
+$storage = $storage | ConvertFrom-Json
+$pdsRoot = $storage.root
+$logDir = $storage.logs
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
 $stdoutPath = Join-Path $logDir "$stamp.stdout.log"

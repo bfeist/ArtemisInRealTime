@@ -244,7 +244,15 @@ def generate_overrides(metadata: list[dict]) -> dict[str, str]:
 # ── Main ────────────────────────────────────────────────────────────────────
 
 
-def scrape_io_exif(mission: MissionConfig, replace: bool = False) -> None:
+def _public_docs(mission, docs):
+    """Avoid scraping thousands of unreleased/preflight records for a web refresh."""
+    from shared.photos_ledger import load_ledger
+    public = {nid for nid, r in load_ledger(mission.photos_ledger_path).items()
+              if r.exported and (not r.utc or mission.mission_start <= r.utc[:10] <= mission.mission_end)}
+    return [d for d in docs if d.get("nasa_id", "").lower() in public]
+
+
+def scrape_io_exif(mission: MissionConfig, replace: bool = False, public_only: bool = False) -> None:
     # 1. Load photos from catalog produced by step 3a2
     catalog_path = mission.io_cache / "io_photo_catalog.jsonl"
     if not catalog_path.exists():
@@ -254,7 +262,7 @@ def scrape_io_exif(mission: MissionConfig, replace: bool = False) -> None:
     all_docs = list(load_jsonl(catalog_path))
     print(f"  Loaded {len(all_docs)} photos from catalog")
 
-    docs_to_scrape = all_docs
+    docs_to_scrape = _public_docs(mission, all_docs) if public_only else all_docs
 
     if not docs_to_scrape:
         print("  Nothing to scrape.")
@@ -326,7 +334,7 @@ def scrape_io_exif(mission: MissionConfig, replace: bool = False) -> None:
     print(f"  Wrote {len(overrides)} overrides to {overrides_path}")
 
 
-def scrape_io_onboard_datetimes(mission: MissionConfig) -> None:
+def scrape_io_onboard_datetimes(mission: MissionConfig, public_only: bool = False) -> None:
     """Scrape Original Filename from IO info pages for onboard camera photos.
 
     Reads io_photo_catalog.jsonl (all photos), skips ground-photographer prefixes
@@ -340,6 +348,8 @@ def scrape_io_onboard_datetimes(mission: MissionConfig) -> None:
         return
 
     all_docs = list(load_jsonl(catalog_path))
+    if public_only:
+        all_docs = _public_docs(mission, all_docs)
     # Skip ground-photographer prefixes — their dates come from md_creation_date + TZ correction
     onboard_docs = [
         d for d in all_docs
@@ -409,6 +419,8 @@ def main():
         "--replace", action="store_true",
         help="Delete existing io_photo_exif.jsonl and re-scrape from scratch",
     )
+    parser.add_argument("--public-only", action="store_true",
+                        help="Only enrich public photos in the mission window; retain all cached corrections")
     args = parser.parse_args()
 
     mission = MISSIONS[args.mission]
@@ -416,9 +428,9 @@ def main():
 
     print(f"\n=== Step 3a3: IO EXIF Scrape — {mission.name} ===\n")
     if not args.onboard_only:
-        scrape_io_exif(mission, replace=args.replace)
+        scrape_io_exif(mission, replace=args.replace, public_only=args.public_only)
     print()
-    scrape_io_onboard_datetimes(mission)
+    scrape_io_onboard_datetimes(mission, public_only=args.public_only)
 
 
 if __name__ == "__main__":

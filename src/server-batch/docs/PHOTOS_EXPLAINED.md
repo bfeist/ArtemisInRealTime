@@ -142,10 +142,11 @@ gallery view can collapse the three into one card and a detail view can offer
 
 The crew/imagery team handed over the original digital negatives. The
 collection is mixed — Nikon SLR NEFs (`art002e023048.NEF`) plus DNGs from
-iPhones and other cameras the crew used. Currently on a D: drive at
-`D:/ArtemisInRealTime_assets/5_Crew-Captured-Imagery/`, moving to
-`F:\_repos\ArtemisInRealTime_assets\artemis-ii\raw\photos\raw_crew\` once
-disk space is freed. They are the **highest-fidelity source for onboard
+iPhones and other cameras the crew used. Bulk originals remain on D: at
+`D:/ArtemisInRealTime_assets/artemis-ii/raw/photos/5_Crew-Captured-Imagery/`
+(`mission.photos_bulk_crew`). Processing also checks the existing originals at
+`F:/_repos/ArtemisInRealTime_assets/artemis-ii/raw/photos/5_Crew-Captured-Imagery/`
+(`mission.photos_raw_crew`). They are the **highest-fidelity source for onboard
 photos** and contain accurate EXIF UTC times.
 
 - Not all of these have been exported. Many have (≈12,000 are in EOL), but

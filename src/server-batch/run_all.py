@@ -55,6 +55,7 @@ STEPS = [
     ("2b", "2_video.2b_ia_video_download", "Download IA video MP4s", None),
     ("2d", "2_video.2d_yt_metadata", "Fetch YouTube metadata", None),
     ("2e", "2_video.2e_yt_download", "Download YouTube videos", None),
+    ("2f", "2_video.2f_ia_video_metadata", "Build legacy IA metadata", None),
     ("2g", "2_video.2g_web_video", "Produce web-ready video JSON", None),
     # ── 2h/2i — standalone scripts (no --mission arg); run directly via uv ───
     # uv run 2_video/2h_split_mkv.py --input "D:/..." --output-dir "D:/chunks"
@@ -199,8 +200,9 @@ def main():
     for step_id, module_path, description, _ in steps_to_run:
         ok = run_step(step_id, module_path, description, args.mission)
         results.append((step_id, ok))
-        if not ok and step_id.startswith("7"):
-            run_step("7g", "7_pds.7g_report", "Report incomplete PDS run", args.mission)
+        if not ok:
+            if step_id.startswith("7"):
+                run_step("7g", "7_pds.7g_report", "Report incomplete PDS run", args.mission)
             break
 
     elapsed = time.time() - start

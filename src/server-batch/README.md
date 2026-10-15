@@ -4,6 +4,52 @@ Data ingestion pipeline for Artemis mission media. Manages comms audio, video,
 and photo assets from Internet Archive, YouTube, Flickr, and NASA Image & Video
 Library.
 
+## Routine updates and the readable status report
+
+Use the staged runner for normal Artemis II upkeep. Source metadata,
+downloads, web builds, and status are separate so checking for new releases
+does not start an expensive transcription or multi-terabyte retrieval.
+
+```powershell
+.venv/Scripts/python.exe refresh_assets.py --mission artemis-ii --stage metadata
+.venv/Scripts/python.exe refresh_assets.py --mission artemis-ii --stage photo-details
+.venv/Scripts/python.exe refresh_assets.py --mission artemis-ii --stage photo-downloads
+.venv/Scripts/python.exe refresh_assets.py --mission artemis-ii --stage build
+.venv/Scripts/python.exe refresh_assets.py --mission artemis-ii --stage status
+```
+
+Open `F:/_repos/ArtemisInRealTime_assets/artemis-ii/processed/asset-status/index.html`.
+It is a searchable local report generated from the existing ledger/manifests,
+not another database. It distinguishes public-release evidence, originals held,
+web files ready on F:, unneeded recordings, and pending PDS releases.
+"Unconfirmed" means no public-release evidence was found, not proof of privacy.
+"Ready on F" does not imply an upload to the remote production website.
+
+Each stage saves its log and input backups on D: under
+`artemis-ii/processed/refresh/`. `--only JOB ...` retries selected jobs; each
+stage has a lock preventing simultaneous runs. Metadata failures retain old
+IO/NASA catalogs and do not prevent independent sources from being checked.
+Builds stop on failed prerequisites. `run_all.py` and individual numbered
+scripts remain available for diagnostics; the legacy all-steps command also
+includes costly download/transcription work and is not the routine refresh.
+
+New Flickr/NASA/EOL originals go to D:. Processing reads originals on either
+drive, keeping existing F: copies in place. Public compressed IA/PDS video,
+PDS audio and supplied transcripts are prepared under F:'s `web/` with separate
+indexes. Same-drive IA MP4s use hard links; cross-drive PDS copies are verified
+against stored SHA-256 evidence. Unsupported codecs are reported for conversion.
+IO-only records never qualify for publication by themselves. User `unneeded`
+video decisions and replacement-coverage notes survive rediscovery.
+Orion camera images use their camera/version identity as the ledger ID because
+their numeric IDs can overlap existing IO/EOL records. Those aliases stay separate
+for comparison before merging. Verified PDS browse PNG/JPEG
+products fill gaps; raw scientific Bayer TIFFs are not used as display images.
+
+Publish the mission's `web/` folder. Keep `raw/` and `processed/`, including
+the internal IO catalog and this report, out of production hosting. PDS SPICE
+release status is checked during discovery; supplied OEM trajectory inputs
+remain a separate source while SPICE is delayed.
+
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/). From this directory:
@@ -23,7 +69,65 @@ FLICKR_API_KEY=...
 IO_KEY=...
 HF_TOKEN=...
 DATA_DIR=/path/to/ArtemisInRealTime_assets   # optional override
+BULK_ASSETS_DIR=D:/ArtemisInRealTime_assets  # bulk originals; mission slug appended
 ```
+
+## Storage layout
+
+Every storage root starts with the mission slug. `DATA_DIR` keeps the existing
+processing caches and web output on F:, `BULK_ASSETS_DIR` keeps bulk originals on
+D:, and `YT_VIDEO_DIR` keeps YouTube downloads on D:. Nothing needs to move from
+D: to F:. PDS defaults to `BULK_ASSETS_DIR`; `PDS_ASSETS_DIR` can override it.
+
+```text
+D:/ArtemisInRealTime_assets/
+  artemis-ii/
+    raw/
+      photos/
+        5_Crew-Captured-Imagery/     # FD_01/... crew NEF/DNG originals
+        5_Crew-Captured-Imagery.zip
+        nef_all/                    # retain the separate raw holding
+        eol/jpeg_high/
+        flickr/
+        images_nasa_gov/
+      video/io/
+      audio/vehicle/1_PCD-Audio-Files/
+      science/ArtemisII_Science_Data_Tracking.xlsx
+      pds/                          # upstream bundle layout retained intact
+    processed/pds/                  # inventory DB, manifests, logs, reports
+    staging/pds/                    # resumable partials
+F:/_repos/ArtemisInRealTime_assets/
+  artemis-i/{raw,processed,web}/
+  artemis-ii/{raw,processed,web}/
+  _shared/kernels/
+D:/ArtemisInRealTime_yt_videos/
+  {mission}/
+```
+
+IO video downloads use `mission.videos_io_dir`; crew processing checks both
+`mission.photos_raw_crew` on F: and `mission.photos_bulk_crew` on D:. PDS reuse
+scans only the selected mission across its configured roots, preventing other
+missions' holdings from becoming candidates. Photo copies already present on
+both drives are retained.
+
+For older holdings, stop ingestion and run from this directory:
+
+```powershell
+.venv/Scripts/python.exe migrate_data_layout.py           # preview
+.venv/Scripts/python.exe migrate_data_layout.py --apply   # same-drive renames
+.venv/Scripts/python.exe -m unittest test_data_layout 7_pds.test_pds -v
+```
+
+The migration verifies file identity, size and modification time; repairs
+absolute paths in the PDS database and current processing metadata; and saves
+a receipt plus metadata/database backups in
+`artemis-ii/processed/storage-migrations/`. Cached hashes, ZIP member names and
+download evidence are retained. Existing destinations cause a preflight failure
+before any move. Rerunning after migration repairs paths without moving media
+again. Historical reports/checkpoints and original PDS labels remain unchanged.
+The removed `VIDEO_ASSETS_DIR`, `PHOTO_ASSETS_DIR`, and `CREW_RAW_SOURCE_DIR`
+settings are replaced by the mission properties under `BULK_ASSETS_DIR` and
+`DATA_DIR`.
 
 ## Running the full pipeline
 
@@ -190,7 +294,7 @@ uv lock --upgrade && uv sync
 ## PDS science release
 
 See [7_pds/README.md](7_pds/README.md) for complete, resumable Artemis II PDS
-retrieval. `PDS_ASSETS_DIR` defaults to `D:/ArtemisInRealTime_assets` independently
-of existing pipeline/web assets. Use the explicit `pds-plan`, `pds-fetch`,
+retrieval. `PDS_ASSETS_DIR` defaults to `BULK_ASSETS_DIR` independently of the
+existing pipeline/web assets in `DATA_DIR`. Use the explicit `pds-plan`, `pds-fetch`,
 `pds-integrate`, or `pds-refresh` runner groups. The long-running retrieval entry
 point is `python -u -m 7_pds.retrieve --mission artemis-ii`.

@@ -100,7 +100,9 @@ def search_io_collection(
                     pr.raise_for_status()
                     all_docs.extend(pr.json()["results"]["response"]["docs"])
                 except requests.RequestException as e:
-                    print(f"\n    Warning: page {page + 1} failed: {e}", flush=True)
+                    raise RuntimeError(
+                        f"IO collection {collection_cid}: page {page + 1} failed; cached catalog retained"
+                    ) from None
                 print(
                     f"\r    Progress: {len(all_docs):>6}/{total} "
                     f"(page {page + 1}/{pages})",
@@ -109,11 +111,12 @@ def search_io_collection(
                 time.sleep(0.3)
 
         print(flush=True)  # newline after the carriage-return progress line
+        if len(all_docs) != total:
+            raise RuntimeError(f"IO collection {collection_cid}: incomplete response ({len(all_docs)}/{total})")
         return all_docs
 
     except requests.RequestException as e:
-        print(f"    Error fetching IO collection CID {collection_cid}: {e}")
-        return []
+        raise RuntimeError(f"IO collection {collection_cid}: request failed; cached catalog retained") from None
 
 
 def list_io_subcollections(
@@ -166,6 +169,8 @@ def append_jsonl(path: Path, record: dict) -> None:
 def save_jsonl(path: Path, records: list[dict]) -> None:
     """Write a list of dicts as a JSONL file (overwrites)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with open(temporary, "w", encoding="utf-8") as f:
         for rec in records:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    temporary.replace(path)

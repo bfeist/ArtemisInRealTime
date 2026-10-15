@@ -59,7 +59,9 @@ def download_videos(mission: MissionConfig) -> None:
         title = video["title"]
 
         # Check if already downloaded
-        existing = list(out_dir.glob(f"*{vid_id}*"))
+        existing = [p for p in out_dir.rglob(f"*{vid_id}*")
+                    if p.is_file() and p.suffix.lower() in {".mp4", ".mkv", ".webm"}
+                    and not p.name.endswith(".temp.mp4") and ".f" not in p.stem]
         if existing:
             print(f"  [{i}/{len(videos)}] Already downloaded: {vid_id}")
             skipped += 1

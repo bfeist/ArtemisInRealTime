@@ -56,8 +56,10 @@ def lookup_nhq_in_io(mission: MissionConfig) -> None:
             io_catalog_lookup[nid] = doc
     print(f"  IO catalog pre-loaded: {len(io_catalog_lookup)} entries")
     already_found = {r.get("nasa_id") for r in load_jsonl(found_path)}
+    # An old miss is not permanent: IO can acquire a record months later.
     already_notfound = {r.get("nasa_id") for r in load_jsonl(notfound_path)}
-    already_done = already_found | already_notfound
+    newly_available = already_notfound & {nid for nid in io_catalog_lookup}
+    already_done = already_found | (already_notfound - newly_available)
 
     to_process = [i for i in nhq_items if i["nasa_id"] not in already_done]
     print(f"  {len(already_done)} already processed, {len(to_process)} remaining")

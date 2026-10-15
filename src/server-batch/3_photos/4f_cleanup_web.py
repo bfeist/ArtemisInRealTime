@@ -88,10 +88,12 @@ def cleanup(mission: MissionConfig, *, dry_run: bool) -> None:
 
         if not dry_run:
             for f in stale:
+                if not f.resolve().is_relative_to(web_photos.resolve()):
+                    raise RuntimeError(f"Cleanup target escapes web/photos: {f}")
                 try:
                     f.unlink()
                 except OSError as e:
-                    console.print(f"[yellow]  failed to delete {f}: {e}[/yellow]")
+                    raise RuntimeError(f"Could not remove stale generated file: {f}") from e
 
     console.print(table)
     mb = grand_freed / (1024 * 1024)

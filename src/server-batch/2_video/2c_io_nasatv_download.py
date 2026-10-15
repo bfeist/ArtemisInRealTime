@@ -4,7 +4,7 @@ Fetches all video docs from the mission's IO NASA TV collection (io_nasatv_cid),
 saves a catalog, downloads each video file, and writes a web-ready JSON summary.
 
 Catalog:   {data_dir}/{mission}/processed/io_cache/io_nasatv_catalog.jsonl
-Downloads: {VIDEO_ASSETS_DIR}/{mission}/            (e.g. D:/ArtemisInRealTime_assets/videos/artemis-ii/)
+Downloads: {BULK_ASSETS_DIR}/{mission}/raw/video/io/
 Web JSON:  {data_dir}/{mission}/web/videoIO.json
 
 Skip logic: if a file with the same nasa_id (or IO id as fallback) already
@@ -131,7 +131,25 @@ def _doc_to_web(doc: dict) -> dict:
 
 def build_web_videos(mission: MissionConfig, docs: list[dict]) -> None:
     """Write web/videoIO.json from catalog docs, sorted by start time."""
-    records = [_doc_to_web(d) for d in docs]
+    plan_path = mission.data_dir / "processed" / "ia_video_downloads.json"
+    plan = json.loads(plan_path.read_text(encoding="utf-8")) if plan_path.exists() else {}
+    public = {r.get("nasa_id", "").lower(): r for r in plan.get("records", [])
+              if r.get("source_url") and r.get("status") != "unneeded"}
+    media_path = mission.data_dir / "processed" / "web-media.json"
+    prepared = json.loads(media_path.read_text(encoding="utf-8")) if media_path.exists() else {}
+    records = []
+    for doc in docs:
+        source = public.get(doc.get("nasa_id", "").lower())
+        if not source:
+            continue
+        record = _doc_to_web(doc)
+        media = prepared.get("ia:" + source["identifier"], {})
+        record["videoUrl"] = ("/artemis-assets/" + mission.slug + "/web" + media["url"]
+                              if media.get("status") == "ready" else source.get("download_url", ""))
+        record["dataUrl"] = source["source_url"]
+        record["webUrl"] = media.get("url", "") if media.get("status") == "ready" else ""
+        record["description"] = ""  # Internal work-order text stays in the processing catalog.
+        records.append(record)
     records.sort(key=lambda r: r["start"] or "9999")
 
     out_path = mission.web_dir / "videoIO.json"

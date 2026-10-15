@@ -122,6 +122,84 @@ Saves a list of IA item metadata (identifier, title, date, mediatype, etc).
 
 For each IA item, fetches its file list via metadata API, picks the best MP4 (prefers `.ia.mp4` low-res derivative), and downloads it.
 
+For in-flight mission coverage, run:
+
+```powershell
+uv run python -m 2_video.2b_ia_video_download --mission artemis-ii --mission-coverage --workers 4
+```
+
+This mode refreshes IA subject discovery and the IO NASA TV catalog, joins exact
+NASA IDs (including letter suffixes), and excludes standalone highlights/recaps,
+unmatched editorial items, and recordings outside the mission dates. Continuous
+coverage that includes a highlights segment is retained as a complete recording.
+Only `.mp4` files are eligible; items without an IA MP4 are reported for later
+retry. No MXF/MOV fallback or IO media download is performed.
+
+The resumable plan and per-record UTC/IO metadata are saved to
+`processed/ia_video_downloads.json`. Downloads use four parallel transfers by
+default, transfer bounded byte ranges, retain incomplete `.mp4.part` files, and verify IA byte counts and MD5
+before promoting them to completed MP4s. MP4 duration differences are recorded
+for review. This manifest is separate from the legacy step 2f metadata.
+
+```powershell
+# Inspect availability without transferring media:
+uv run python -m 2_video.2b_ia_video_download --mission artemis-ii --mission-coverage --plan-only
+# Resume the saved selection without repeating discovery:
+uv run python -m 2_video.2b_ia_video_download --mission artemis-ii --download-plan "F:/_repos/ArtemisInRealTime_assets/artemis-ii/processed/ia_video_downloads.json"
+```
+
+For a persistent background transfer on Windows, with logs and a PID record:
+
+```powershell
+./2_video/start_ia_download.ps1 -Mission artemis-ii -Workers 4 -UseSavedPlan
+```
+
+Logs are saved to `processed/logs/ia-video/`. A mission plan lock prevents
+concurrent transfers to the same files. The default legacy mode still
+uses the existing step 2a catalog; use `--mission-coverage` for the filtered intake.
+
+The background launcher automatically reuses an existing plan. Both mission MP4
+and original transfers resume from the current `.part` byte count after a
+disconnect or restart. The retry budget resets whenever a range succeeds or
+bytes advance, so intermittent errors do not exhaust a file's lifetime budget.
+After five consecutive failed attempts, temporary network failures are retried
+in another queue pass after five minutes; retries continue by default. Permanent
+HTTP errors, invalid range responses, checksum failures, and storage deferrals
+remain in the manifest for review. Use `--retry-rounds N` to limit extra passes
+or `--retry-delay SECONDS` to change the cooldown (PowerShell: `-RetryRounds` and
+`-RetryDelay`). The manifest saves `downloading`/`pending` states, byte counts,
+and UTC progress timestamps at least every 30 seconds during transfers.
+
+### Originals for recordings without an IA MP4 (`2l_ia_originals.py`)
+
+When retrieval of originals has been explicitly requested, this separate intake
+selects only `no_mp4_available` entries from the saved mission MP4 plan. It keeps
+the recap exclusions and IO timing fields, downloads the matching original MXF,
+and verifies IA byte counts and MD5. Originals are marked `needs_conversion` and
+tracked in `processed/ia_video_originals.json`; the MP4 manifest is not changed.
+The default destination is `{BULK_ASSETS_DIR}/{mission}/raw/video/ia_originals/`.
+
+```powershell
+# Prepare the original selection and inspect total size:
+uv run python -m 2_video.2l_ia_originals --mission artemis-ii --prepare-only
+# Start a bounded background batch on the default bulk drive:
+./2_video/start_ia_download.ps1 -Mission artemis-ii -Workers 2 -Originals -UseSavedPlan -MaxFiles 2
+# Resume all recordings into a chosen large-capacity folder:
+uv run python -m 2_video.2l_ia_originals --mission artemis-ii --resume --output-dir "V:/ArtemisInRealTime_assets/artemis-ii/raw/video/ia_originals"
+```
+
+The queue uses at most two concurrent transfers. If a recording would leave
+less than 50 GiB free, it is deferred as `waiting_for_space`. A bounded batch
+leaves the remaining recordings pending. Changing `--output-dir` on resume
+redirects only unstarted files, preserving completed files and partial transfers
+at their existing paths. Conversion uses those recorded paths. Original transfer
+logs and the PID are saved under `processed/logs/ia-originals/`.
+An existing original plan is resumed automatically, even without `--resume`.
+Records explicitly marked `unneeded` are skipped on every resume, including
+when a retained `.mxf.part` exists. Their reason and replacement coverage paths
+remain in the manifest. Mission MP4 plans also treat `unneeded` as a terminal
+status, so recordings covered by YouTube do not return to the original queue.
+
 ### 2f: IA Video Metadata (`2f_ia_video_metadata.py`)
 
 |                |                                                                       |

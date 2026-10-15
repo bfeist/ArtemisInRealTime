@@ -44,7 +44,7 @@ The "not found" items are typically IA uploads that used non-standard identifier
 
 - `processed/io_cache/io_nasatv_catalog.jsonl` — raw IO docs for every video in the collection
 - `web/io_videos.json` — web-ready metadata: id, title, description, start/end times, duration, collection path, videoUrl, dataUrl
-- `{VIDEO_ASSETS_DIR}/{mission}/` — downloaded video files named by nasa_id
+- `{BULK_ASSETS_DIR}/{mission}/raw/video/io/` — downloaded video files named by nasa_id
 
 | Mission    | NASA TV CID | Videos |
 | ---------- | ----------- | ------ |

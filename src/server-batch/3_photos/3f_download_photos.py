@@ -5,11 +5,14 @@ Sources:
   2. images.nasa.gov — reads catalog.json (from step 3e), resolves ~orig asset.
 
 Produces:
-  {data_dir}/{mission}/raw/photos/flickr/{photo_id}.{ext}
-  {data_dir}/{mission}/raw/photos/nasa_images/{nasa_id}~orig.{ext}
+  {bulk_dir}/{mission}/raw/photos/flickr/{nasa_id_or_title}.{ext}
+  {bulk_dir}/{mission}/raw/photos/images_nasa_gov/{nasa_id}.{ext}
+Existing originals on either drive are reused. Four concurrent transfers write
+atomic .part files, so an interrupted download is not mistaken for an original.
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import re
 import sys
@@ -41,6 +44,7 @@ def _download(url: str, dest: Path, desc: str | None = None,
     if dest.exists():
         return True
     dest.parent.mkdir(parents=True, exist_ok=True)
+    temporary = dest.with_suffix(dest.suffix + ".part")
 
     for attempt in range(max_retries):
         try:
@@ -63,7 +67,7 @@ def _download(url: str, dest: Path, desc: str | None = None,
                 continue
             resp.raise_for_status()
             total = int(resp.headers.get("content-length", 0))
-            with open(dest, "wb") as f, tqdm(
+            with open(temporary, "wb") as f, tqdm(
                 total=total,
                 unit="B",
                 unit_scale=True,
@@ -73,13 +77,24 @@ def _download(url: str, dest: Path, desc: str | None = None,
                 for chunk in resp.iter_content(chunk_size=65536):
                     f.write(chunk)
                     bar.update(len(chunk))
+            if total and temporary.stat().st_size != total:
+                raise requests.RequestException("Incomplete photo response")
+            temporary.replace(dest)
             return True
         except requests.RequestException as e:
             print(f"    Error downloading {url}: {e}")
-            if dest.exists():
-                dest.unlink()
             return False
     return False
+
+
+def _download_many(work):
+    """A small fixed pool for independent originals, using the existing retry logic."""
+    successful = 0
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(_download, url, dest, desc=desc) for url, dest, desc in work]
+        for future in as_completed(futures):
+            successful += bool(future.result())
+    return successful
 
 
 def _nasa_orig_url(nasa_id: str) -> str | None:
@@ -116,7 +131,7 @@ def download_flickr_originals(mission: MissionConfig) -> None:
     with open(metadata_path, "r", encoding="utf-8") as f:
         photos: list[dict] = json.load(f)
 
-    out_dir = mission.photos_flickr_orig
+    out_dir = mission.photo_download_dir("flickr")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     total = len(photos)
@@ -126,10 +141,12 @@ def download_flickr_originals(mission: MissionConfig) -> None:
     # Anything written during *this* run is tracked in written_this_run so
     # collisions (two photos resolving to the same NASA ID) get a disambiguating
     # suffix instead of being silently skipped.
-    preexisting: set[str] = {p.name for p in out_dir.iterdir()} if out_dir.exists() else set()
+    preexisting: set[str] = {p.name for root in mission.photo_source_dirs("flickr")
+                            if root.exists() for p in root.iterdir() if p.is_file()}
     written_this_run: set[str] = set()
 
     downloaded = skipped = missing_url = collisions = 0
+    work = []
     for i, photo in enumerate(photos, 1):
         url_o = photo.get("url_o", "")
         if not url_o:
@@ -167,14 +184,14 @@ def download_flickr_originals(mission: MissionConfig) -> None:
             collisions += 1
 
         dest = out_dir / filename
-        ok = _download(url_o, dest, desc=f"flickr {photo_id}")
-        if ok:
-            downloaded += 1
-            written_this_run.add(filename)
+        work.append((url_o, dest, f"flickr {photo_id}"))
+        written_this_run.add(filename)
 
         if i % 50 == 0:
             print(f"    [{i}/{total}] downloaded={downloaded} skipped={skipped} collisions={collisions}")
-        time.sleep(0.5)   # be polite to live.staticflickr.com
+    downloaded = _download_many(work)
+    if downloaded != len(work):
+        raise RuntimeError(f"{len(work) - downloaded} Flickr originals failed; partials retained")
 
     print(
         f"\n  Flickr done: {downloaded} downloaded, {skipped} already present"
@@ -196,7 +213,7 @@ def download_nasa_originals(mission: MissionConfig) -> None:
     with open(catalog_path, "r", encoding="utf-8") as f:
         items: list[dict] = json.load(f)
 
-    out_dir = mission.photos_nasa_orig
+    out_dir = mission.photo_download_dir("nasa_images")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     total = len(items)
@@ -205,13 +222,14 @@ def download_nasa_originals(mission: MissionConfig) -> None:
     # Pre-scan existing files so we can skip before making any network calls.
     # The stem is the NASA ID (lowercased); strip any ~orig suffix just in case.
     existing_ids: set[str] = set()
-    if out_dir.exists():
-        for f in out_dir.iterdir():
+    for root in mission.photo_source_dirs("nasa_images"):
+        for f in root.iterdir() if root.exists() else []:
             if f.is_file():
                 stem = f.stem.lower()
                 existing_ids.add(stem.split("~")[0])
 
     downloaded = skipped = failed = 0
+    work = []
     for i, item in enumerate(items, 1):
         nasa_id = item.get("nasa_id", "")
         if not nasa_id:
@@ -235,21 +253,20 @@ def download_nasa_originals(mission: MissionConfig) -> None:
             skipped += 1
             continue
 
-        ok = _download(orig_url, dest, desc=nasa_id)
-        if ok:
-            downloaded += 1
-        else:
-            failed += 1
+        work.append((orig_url, dest, nasa_id))
 
         if i % 25 == 0:
             print(f"    [{i}/{total}] downloaded={downloaded} skipped={skipped} failed={failed}")
-        time.sleep(0.3)
+    downloaded = _download_many(work)
+    failed += len(work) - downloaded
 
     print(
         f"\n  NASA done: {downloaded} downloaded, {skipped} already present"
         + (f", {failed} failed/skipped" if failed else "")
     )
     print(f"  Output: {out_dir}")
+    if failed:
+        raise RuntimeError(f"{failed} NASA originals failed; existing files retained")
 
 
 # ── entry point ───────────────────────────────────────────────────────────────

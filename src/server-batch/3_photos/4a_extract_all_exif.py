@@ -310,23 +310,24 @@ def extract_all(mission: MissionConfig) -> None:
         ("manual",      mission.photos_manual),
     ]
 
-    # raw_crew goes through ExifTool. Falls back to legacy CREW_RAW_SOURCE_DIR
-    # if the per-mission dir is empty (matches 3l_flight_nef.py's behaviour).
-    from config import CREW_RAW_SOURCE_DIR
-    raw_crew_dir = mission.photos_raw_crew
-    if not raw_crew_dir.exists() or not any(raw_crew_dir.iterdir()):
-        if CREW_RAW_SOURCE_DIR.exists():
-            console.print(
-                f"  [dim]raw_crew falling back to legacy location: "
-                f"{CREW_RAW_SOURCE_DIR}[/dim]"
-            )
-            raw_crew_dir = CREW_RAW_SOURCE_DIR
-
     # ── Plan work ───────────────────────────────────────────────────────────
     plan: dict[str, list[tuple[Path, Path]]] = {}
     skipped_total = 0
     for name, dir_ in jpeg_sources:
-        work, skipped = _scan_source(name, dir_, _JPEG_EXTS, exif_dir)
+        # Deduplicate by destination in the same precedence as the ledger.
+        chosen = {}
+        skipped = 0
+        for root in mission.photo_source_dirs(name):
+            for path in root.glob("*") if root.exists() else []:
+                if path.is_file() and path.suffix.lower() in _JPEG_EXTS:
+                    chosen.setdefault(_nasa_id_from_filename(path), path)
+        work = []
+        for nid, path in chosen.items():
+            dest = exif_dir / name / (nid + ".json")
+            if _needs_extraction(path, dest):
+                work.append((path, dest))
+            else:
+                skipped += 1
         plan[name] = work
         skipped_total += skipped
         console.print(

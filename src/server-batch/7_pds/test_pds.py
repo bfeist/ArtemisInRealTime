@@ -60,8 +60,7 @@ class PDSTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.mission = MissionConfig("test", "artemis-ii", "2026-04-01", "2026-04-11", "test")
         self.paths = patch.multiple("config", PDS_ASSETS_DIR=self.root, DATA_DIR=self.root / "old",
-                                   CREW_RAW_SOURCE_DIR=self.root / "legacy", PHOTO_ASSETS_DIR=self.root / "old",
-                                   VIDEO_ASSETS_DIR=self.root / "videos", YT_VIDEO_DIR=self.root / "yt")
+                                   BULK_ASSETS_DIR=self.root, YT_VIDEO_DIR=self.root / "yt")
         self.paths.start()
         self.c = db(self.mission)
 
@@ -109,11 +108,11 @@ class PDSTest(unittest.TestCase):
 
     def test_local_link_copy_zip_and_second_run(self):
         self.mission.pds_raw.mkdir(parents=True)
-        source = self.root / "legacy" / "art002e023072.NEF"
-        source.parent.mkdir()
+        source = self.mission.photos_bulk_crew / "art002e023072.NEF"
+        source.parent.mkdir(parents=True)
         source.write_bytes(PAYLOAD)
         self.insert()
-        with zipfile.ZipFile(self.root / "samples.zip", "w") as z:
+        with zipfile.ZipFile(self.mission.bulk_dir / "samples.zip", "w") as z:
             z.writestr("nested/art002e023073.NEF", b"ZIP source bytes")
         self.insert("data_source/art002e023073_nkd5015_src_v01.nef", b"ZIP source bytes")
         pipeline.inventory(self.mission)
@@ -136,8 +135,8 @@ class PDSTest(unittest.TestCase):
         p.write_bytes(b"x" * len(PAYLOAD))
         with self.assertRaisesRegex(ValueError, "MD5"):
             verify_file(row, p)
-        old = self.root / "legacy" / "art002e023072.NEF"
-        old.parent.mkdir()
+        old = self.mission.photos_bulk_crew / "art002e023072.NEF"
+        old.parent.mkdir(parents=True)
         old.write_bytes(b"y" * len(PAYLOAD))
         pipeline.inventory(self.mission)
         pipeline.reconcile(self.mission, 0)
@@ -147,7 +146,7 @@ class PDSTest(unittest.TestCase):
         self.assertEqual(self.c.execute("SELECT status FROM remote").fetchone()[0], "pending")
 
     def test_corrupt_zip_falls_back_to_canonical_download(self):
-        archive_path = self.root / "corrupt.zip"
+        archive_path = self.mission.bulk_dir / "corrupt.zip"
         with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
             z.writestr("art002e023072.NEF", PAYLOAD)
         with zipfile.ZipFile(archive_path) as z:
@@ -247,7 +246,9 @@ class PDSTest(unittest.TestCase):
         path = self.root / "processed.tif"
         Image.new("RGB", (4, 4), (100, 50, 20)).save(path)
         rec = LedgerRecord("art002e023072")
-        rec.copies["eol"] = Copy(path="legacy.jpg")
+        legacy = self.root / "legacy.jpg"
+        Image.new("RGB", (4, 4), (100, 50, 20)).save(legacy)
+        rec.copies["eol"] = Copy(path=str(legacy))
         rec.pds_products = [{"path": str(path), "role": "data_raw", "assurance": "verified"}]
         self.assertEqual(tiers._pick_source(rec, True)[0], "eol")
         rec.pds_products[0]["role"] = "data_processed"

@@ -20,23 +20,11 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
 # ── Directories ───────────────────────────────────────────────────────────────
 DATA_DIR = Path(os.environ.get("DATA_DIR", REPO_ROOT.parent / "ArtemisInRealTime_assets"))
-YT_VIDEO_DIR = Path(os.environ.get("YT_VIDEO_DIR", "H:/ArtemisInRealTime_yt_videos"))
-VIDEO_ASSETS_DIR = Path(os.environ.get("VIDEO_ASSETS_DIR", "D:/ArtemisInRealTime_assets/videos"))
-PDS_ASSETS_DIR = Path(os.environ.get("PDS_ASSETS_DIR", "D:/ArtemisInRealTime_assets"))
-
-# Crew raw imagery (NEF + DNG) lives outside the per-mission tree until disk
-# space is freed and they're moved into mission.photos_raw_crew. The legacy D:
-# location is the default; override with CREW_RAW_SOURCE_DIR.
-CREW_RAW_SOURCE_DIR = Path(
-    os.environ.get(
-        "CREW_RAW_SOURCE_DIR",
-        "D:/ArtemisInRealTime_assets/5_Crew-Captured-Imagery",
-    )
-)
-
-# DEPRECATED: PHOTO_ASSETS_DIR is being collapsed into mission.data_dir.
-# Kept as an alias for one cycle in case any code still imports it.
-PHOTO_ASSETS_DIR = Path(os.environ.get("PHOTO_ASSETS_DIR", DATA_DIR))
+YT_VIDEO_DIR = Path(os.environ.get("YT_VIDEO_DIR", "D:/ArtemisInRealTime_yt_videos"))
+# Every storage root starts with a mission slug. Keep bulk originals on D:
+# while DATA_DIR holds the existing processing caches and web output on F:.
+BULK_ASSETS_DIR = Path(os.environ.get("BULK_ASSETS_DIR", "D:/ArtemisInRealTime_assets"))
+PDS_ASSETS_DIR = Path(os.environ.get("PDS_ASSETS_DIR", BULK_ASSETS_DIR))
 
 # ── IO API ────────────────────────────────────────────────────────────────────
 
@@ -105,6 +93,15 @@ class MissionConfig:
         return DATA_DIR / self.slug
 
     @property
+    def bulk_dir(self) -> Path:
+        return BULK_ASSETS_DIR / self.slug
+
+    @property
+    def photos_bulk_crew(self) -> Path:
+        """Crew originals on the bulk drive, scoped to this mission."""
+        return self.bulk_dir / "raw" / "photos" / "5_Crew-Captured-Imagery"
+
+    @property
     def pds_raw(self) -> Path:
         return PDS_ASSETS_DIR / self.slug / "raw" / "pds"
 
@@ -118,8 +115,8 @@ class MissionConfig:
 
     @property
     def pds_inventory_roots(self) -> list[Path]:
-        return list(dict.fromkeys([PDS_ASSETS_DIR, self.data_dir, CREW_RAW_SOURCE_DIR,
-                                  PHOTO_ASSETS_DIR, VIDEO_ASSETS_DIR, self.yt_video_dir]))
+        return list(dict.fromkeys([PDS_ASSETS_DIR / self.slug, self.bulk_dir,
+                                  self.data_dir, self.yt_video_dir]))
 
     @property
     def raw_video_ia(self) -> Path:
@@ -171,6 +168,18 @@ class MissionConfig:
         through EXIF extraction, ledger build, and tier generation."""
         return self.data_dir / "raw" / "photos" / "manual"
 
+    def photo_source_dirs(self, source: str) -> list[Path]:
+        """Read existing originals on either drive; keep metadata on DATA_DIR."""
+        relative = {"eol": "eol/jpeg_high", "flickr": "flickr",
+                    "nasa_images": "images_nasa_gov", "ia_stills": "ia_stills",
+                    "manual": "manual"}[source]
+        return list(dict.fromkeys(root / "raw" / "photos" / relative
+                                 for root in (self.data_dir, self.bulk_dir)))
+
+    def photo_download_dir(self, source: str) -> Path:
+        """New originals go to the bulk drive, never the web drive."""
+        return self.photo_source_dirs(source)[-1]
+
     # ── Per-source intake metadata (raw, source-shaped) ───────────────────
 
     @property
@@ -194,7 +203,7 @@ class MissionConfig:
 
     @property
     def videos_io_dir(self) -> Path:
-        return VIDEO_ASSETS_DIR / self.slug
+        return self.bulk_dir / "raw" / "video" / "io"
 
     # ── Web outputs ────────────────────────────────────────────────────────
 

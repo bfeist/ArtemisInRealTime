@@ -186,7 +186,10 @@ def build_web_json(mission: MissionConfig) -> None:
     hires_dir = mission.web_photos_hires
     publishable: set[str] = set()
     if hires_dir.exists():
-        publishable = {f.stem for f in hires_dir.iterdir() if f.suffix.lower() == ".jpg"}
+        publishable = {nid for nid, rec in ledger.items() if rec.exported
+                       and _in_window(rec, win_start, win_end)
+                       and all((web_photos_dir / tier / (nid + ".jpg")).is_file()
+                               for tier in ("thumb", "lowres", "hires"))}
 
     # ── Index bracket sets by set_id (collected from any ledger record) ───
     # Members are filtered to the publishable set so non-exported bracket

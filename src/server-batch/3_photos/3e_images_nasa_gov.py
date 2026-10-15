@@ -13,7 +13,7 @@ import json
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -66,7 +66,7 @@ def search_nasa_images(mission: MissionConfig) -> list[dict]:
 
     # Mission date window
     win_start = datetime.strptime(mission.mission_start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    win_end = datetime.strptime(mission.mission_end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    win_end = datetime.strptime(mission.mission_end, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1) - timedelta(microseconds=1)
     year_start = win_start.year
     year_end = win_end.year
 
@@ -104,8 +104,7 @@ def search_nasa_images(mission: MissionConfig) -> list[dict]:
                 resp.raise_for_status()
                 data = resp.json()
             except requests.RequestException as e:
-                print(f"    Error on page {page}: {e}")
-                break
+                raise RuntimeError(f"NASA images page {page} failed; cached catalog retained") from None
 
             items = data.get("collection", {}).get("items", [])
             if not items:
@@ -203,6 +202,8 @@ def main():
     items = search_nasa_images(mission)
 
     out_path = mission.raw_photos_nasa / "catalog.json"
+    if out_path.exists() and not items:
+        raise RuntimeError("NASA returned no mission images; previous catalog retained")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(items, f, indent=2, ensure_ascii=False)

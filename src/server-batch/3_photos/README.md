@@ -110,7 +110,7 @@ nothing has changed (each step skips up-to-date work).
 | `FLICKR_API_KEY`      | `3b`       |                                                   |
 | `IO_KEY`              | IO steps   | `3a2`, `3a3`, `3e2`                               |
 | `NASA_EOL_API_KEY`    | `3g`       |                                                   |
-| `CREW_RAW_SOURCE_DIR` | `3l`, `4a` | Fallback for crew raws while migrating to F: tree |
+| `BULK_ASSETS_DIR` | `3l`, `4a`, `4c` | Crew originals at `{root}/{mission}/raw/photos/5_Crew-Captured-Imagery/` on the bulk drive |
 
 ### Required tools
 

@@ -108,7 +108,7 @@ def main():
         sys.exit(0)
 
     # Output directory
-    out_dir = mission.photos_eol
+    out_dir = mission.photo_download_dir("eol")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     console.print(f"[bold blue]EOL photo downloader — {mission.name}[/bold blue]")
@@ -133,7 +133,7 @@ def main():
         canonical = to_canonical_filename(on_wire_name)  # e.g. art002e000168.jpg
         filename = canonical or on_wire_name             # fall back if regex misses
         dest = out_dir / filename
-        if dest.exists():
+        if any((root / filename).exists() for root in mission.photo_source_dirs("eol")):
             already_done += 1
         else:
             work.append((url, dest))

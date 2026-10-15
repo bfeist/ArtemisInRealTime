@@ -23,7 +23,7 @@ from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import MISSIONS, MissionConfig, CREW_RAW_SOURCE_DIR
+from config import MISSIONS, MissionConfig
 from shared.eol_naming import to_canonical_nasa_id
 from shared.io_api import load_jsonl
 from shared.photos_ledger import (
@@ -367,6 +367,10 @@ def _scan_dir_to_nasa_id(directory: Path, accept_exts: set[str]) -> dict[str, Pa
     """List a flat directory and return {nasa_id: path} for every recognised file.
     NASA ID = file stem, lowercased, with any '~orig' suffix stripped."""
     out: dict[str, Path] = {}
+    if isinstance(directory, (list, tuple)):
+        for root in reversed(directory):
+            out.update(_scan_dir_to_nasa_id(root, accept_exts))
+        return out
     if not directory.exists():
         return out
     for f in directory.iterdir():
@@ -385,6 +389,10 @@ def _scan_eol_dir(directory: Path) -> dict[str, Path]:
     on-the-wire filenames left over from before the rename migration
     (`ART002-E-168.JPG`)."""
     out: dict[str, Path] = {}
+    if isinstance(directory, (list, tuple)):
+        for root in reversed(directory):
+            out.update(_scan_eol_dir(root))
+        return out
     if not directory.exists():
         return out
     for f in directory.iterdir():
@@ -443,7 +451,12 @@ def _add_eol(
         with open(eol_json_path, "r", encoding="utf-8") as f:
             eol_items = json.load(f)
         for item in eol_items:
-            nasa_id = (item.get("ID") or "").lower()
+            # EOL composite IDs are unpadded (ART002E168); local/IO/PDS IDs
+            # are padded (art002e000168). Prefer the on-wire filename.
+            nasa_id = to_canonical_nasa_id(Path(item.get("large") or "").name)
+            if not nasa_id:
+                match = re.fullmatch(r"(art\d{3}[a-z])(\d+)", item.get("ID", ""), re.I)
+                nasa_id = (match[1].lower() + match[2].zfill(6)) if match else (item.get("ID") or "").lower()
             if not nasa_id:
                 continue
             rec = records.setdefault(nasa_id, LedgerRecord(nasa_id=nasa_id))
@@ -804,7 +817,7 @@ def build_ledger(mission: MissionConfig) -> None:
 
     # 2. Public-source intake
     eol_marked, eol_files = _add_eol(
-        records, mission.eol_json_path, mission.photos_eol
+        records, mission.eol_json_path, mission.photo_source_dirs("eol")
     )
     console.print(
         f"  EOL:               [cyan]{eol_marked:>6}[/cyan] exported "
@@ -812,7 +825,7 @@ def build_ledger(mission: MissionConfig) -> None:
     )
 
     nasa_marked, nasa_files = _add_nasa_images(
-        records, mission.raw_photos_nasa / "catalog.json", mission.photos_nasa_orig
+        records, mission.raw_photos_nasa / "catalog.json", mission.photo_source_dirs("nasa_images")
     )
     console.print(
         f"  images.nasa.gov:   [cyan]{nasa_marked:>6}[/cyan] exported "
@@ -820,14 +833,14 @@ def build_ledger(mission: MissionConfig) -> None:
     )
 
     fl_marked, fl_files, fl_unmatched = _add_flickr(
-        records, mission.raw_photos_flickr / "album_metadata.json", mission.photos_flickr_orig
+        records, mission.raw_photos_flickr / "album_metadata.json", mission.photo_source_dirs("flickr")
     )
     console.print(
         f"  Flickr:            [cyan]{fl_marked:>6}[/cyan] exported (matched), "
         f"[dim]{fl_files} with file, {fl_unmatched} unmatched[/dim]"
     )
 
-    ia_marked, ia_files = _add_ia_stills(records, mission.photos_ia_stills)
+    ia_marked, ia_files = _add_ia_stills(records, mission.photo_source_dirs("ia_stills"))
     console.print(
         f"  IA stills:         [cyan]{ia_marked:>6}[/cyan] exported "
         f"([dim]{ia_files} files[/dim])"
@@ -840,7 +853,16 @@ def build_ledger(mission: MissionConfig) -> None:
     )
 
     # 3. Crew raws — files only, no export effect
-    raw_count = _add_raw_crew(records, mission.photos_raw_crew, CREW_RAW_SOURCE_DIR)
+    raw_count = _add_raw_crew(records, mission.photos_raw_crew, mission.photos_bulk_crew)
+    # Mixed historical hand-off folder contains additional crew raws and JPEGs.
+    for root in (mission.data_dir / "raw/photos/nef_all", mission.bulk_dir / "raw/photos/nef_all"):
+        for path in sorted(root.rglob("*")) if root.exists() else []:
+            if path.is_file() and path.suffix.lower() in {".nef", ".dng", ".jpg", ".jpeg"}:
+                nid = path.stem.lower()
+                rec = records.setdefault(nid, LedgerRecord(nasa_id=nid))
+                if not rec.copies.get("raw_crew"):
+                    rec.copies["raw_crew"] = Copy(path=str(path))
+                    raw_count += 1
     console.print(f"  raw_crew files:    [cyan]{raw_count:>6}[/cyan]")
 
     # 4. Per-copy EXIF

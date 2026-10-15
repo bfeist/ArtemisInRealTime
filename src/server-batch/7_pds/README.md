@@ -3,7 +3,12 @@
 Artemis II's complete available PDS archive is discovered without image, target,
 flight-day or extension filters. Original downloads, partials, manifests, SQLite
 state and reports default to `D:/ArtemisInRealTime_assets/artemis-ii`. Set
-`PDS_ASSETS_DIR` to configure this separately from the existing `DATA_DIR`.
+`BULK_ASSETS_DIR` to configure bulk storage, or `PDS_ASSETS_DIR` for a separate
+archive root. Both append the mission slug first, independently of `DATA_DIR`.
+Other bulk holdings now live in this same mission's `raw/photos`, `raw/video/io`,
+`raw/audio/vehicle` and `raw/science` directories; the migration is described in
+[`../README.md`](../README.md#storage-layout). PDS reuse inventory scans the
+selected mission's roots only.
 
 Run from `src/server-batch` using the existing Python environment:
 
@@ -53,8 +58,8 @@ ZIP members, cached hashes, transfers, label metadata and reconciliation issues.
 
 Matching D: files are hard linked; matching other-volume files are copied;
 verified ZIP members are extracted individually. Treat both source and linked
-PDS aliases as immutable: editing either name changes the same bytes. No legacy
-source is deleted, moved or overwritten. Distinct archive paths and roles remain
+PDS aliases as immutable: editing either name changes the same bytes. Retrieval
+does not delete, move or overwrite source holdings. Distinct archive paths and roles remain
 distinct even when content is equal. Existing conflicting PDS destinations are
 retained under `processed/pds/quarantine` before replacement.
 
