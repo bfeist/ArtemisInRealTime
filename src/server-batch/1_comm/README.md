@@ -51,6 +51,7 @@ Downloads ZIP archives, then auto-extracts WAV files into per-date subdirectorie
 | ---------------- | ---------------------------------------------------------- |
 | **Input**        | `raw/comm/**/*.wav`                                        |
 | **Output**       | `processed/transcripts/comm/{date}/{wav_stem}.json`        |
+| **Audio cache**  | `processed/comm_audio/{date}/{wav_stem}.aac` (published by `1c` only if referenced) |
 | **Idempotent**   | Yes — skips WAVs that already have a `.json` output        |
 | **GPU required** | Yes — WhisperX large-v3 on CUDA                            |
 | **Flags**        | `--force` re-transcribes all; `--test N` limits to N files |
@@ -66,19 +67,176 @@ Each output JSON contains:
 }
 ```
 
-### 1c: Web Comm JSON (`1c_web_comm.py`)
+### 1c: Publish comm transcripts and audio (`1c_web_comm.py`)
 
 |                |                                        |
 | -------------- | -------------------------------------- |
 | **Input**      | `processed/transcripts/comm/**/*.json` |
-| **Output**     | `web/comm.json`                        |
+| **Output**     | `web/comm.json`, `web/comm.csv`, `web/comm_sources.json` |
 | **Idempotent** | Yes — overwrites output each run       |
 
-Aggregates per-file transcripts into a single chronologically-sorted JSON array. Filters hallucination strings. Each entry has `t` (UTC time), `d` (duration), `text`, and `segments`.
+Audio producers (`1b`, standalone `1b2`, `1b3`, and `1b4`) prepare playback
+files under `processed/comm_audio/`, outside the publishable web tree.
+After hallucination filtering and corrected-loop precedence, `1c`:
+
+1. Checks that every surviving source has nonempty prepared audio, adopting
+   existing `web/comm` files into the cache on the first run. Missing audio
+   fails the build before changing the published transcript indexes.
+2. Publishes only referenced recordings into `web/comm`, using hard links
+   where supported and copies otherwise. A file with any surviving utterance
+   stays published; M4A recordings retain their playback offsets and range seeking.
+3. Writes `comm.csv`, `comm.json`, and the referenced PDS source metadata.
+4. Moves every unreferenced file out of `web/comm` into the processing cache,
+   then removes empty date folders. This includes superseded AI clips, filtered
+   clips, and excluded Mission Audio. Conflicting cached versions are retained
+   under `processed/comm_audio/_retired/{run}/`.
+
+`processed/comm_audio_manifest.json` records published paths, byte sizes,
+utterance counts, and retired files. Runs that retire files also keep a receipt
+under `processed/comm_audio_reconciliations/`. Raw audio and transcript JSONs
+remain available, and a later build can restore a source directly from the cache.
+An empty comm export is rejected so missing inputs cannot retire all audio.
+
+This finalization is part of `1c` itself: normal runs, `pcd-comm`, `loops-comm`,
+PDS integration/refresh groups, and `refresh_assets.py --stage build` all use
+the same publication policy. To reconcile existing assets without transcription:
+
+```powershell
+.venv/Scripts/python.exe run_all.py --mission artemis-ii --step 1c
+```
+
+Aggregates per-file transcripts into chronologically sorted pipe-delimited CSV.
+Columns are `t|s|d|src|text`: segment UTC, audio offset, segment duration,
+audio source relative to `web/comm/`, and text. Machine transcripts receive
+hallucination filtering; supplied PDS transcripts retain their text.
+
+The app reads `web/comm.json`, using the shared TypeScript `CommEntry` type.
+Each entry has `t`, `s`, `d`, `src`, `text`, and optional `speaker`. Speaker
+names are separate from the utterance text and rendered when present in the
+comm list, player and timeline tooltips. Utterances without speaker metadata
+omit the field. All views can fall back to older `comm.csv` assets.
+The five-column batch CSV keeps its existing `[speaker] text` representation
+for downstream enrichment and PAO matching; it does not gain a new column.
+
+### 1b3: Crew PCD audio (`1b3_pcd_audio.py`)
+
+Imports verified PDS `data_audio_pcd` recordings into the same comm flow,
+preferring edited `data_transcripts_pcd` CSV/SRT over WhisperX. Run `7f` first
+to build the PDS catalogs, then `run_all.py --mission artemis-ii --step pcd-comm`
+to import PCD and rebuild `web/comm.csv`. The normal all-steps comm run also
+includes `1b3`; PDS archive retrieval remains explicit.
+
+JSONs under `processed/transcripts/comm/pcd` retain NASA ID, speakers, exact
+supplied utterance UTC, relative playback offsets and provenance. Recording
+start UTC comes from labels, with a cached exact-ID Imagery Online fallback.
+PCD never receives the IA radio timezone correction. Missing UTC and pending
+supplied products are reported in `processed/pds/pcd_comm_report.json`.
+
+Step `1c` emits the existing five-column `t|s|d|src|text` CSV, including PCD
+sources such as `pcd/art002a000005.m4a`. Step `1b3` caches playback under
+`processed/comm_audio/pcd`; `1c` publishes referenced files to `web/comm/pcd`.
+`web/comm_sources.json` maps each published PCD source to metadata and
+PDS provenance. Comm Test has a separate PCD channel toggle. Supplied transcript
+text is preserved, including phrases filtered as hallucinations for machine
+transcription. See [PDS details](../7_pds/README.md#crew-pcd-audio-and-comm-transcripts)
+for timing adjustments, fallback transcription and rerun behavior.
+
+PCD playback uses the dated comm encoding: mono AAC at 22,050 Hz and 64 kbps.
+It retains the `.m4a` container and front-loaded index for seeking within a
+recording. Original multichannel PDS audio remains in `raw/pds`. The shared
+profile lives in `shared/comm_encoding.py`; both `1b3` and routine `1c` builds
+upgrade older playback encodes using the original recording, without changing
+transcript text, UTC, offsets or durations. The saved `audio_encoding` profile
+makes subsequent runs skip unchanged audio.
+
+Corrected loop recordings already contain low-bitrate AAC and remain unchanged;
+raising those to 64 kbps would increase their size.
+
+### 1b4: Corrected mission voice loops (`1b4_loop_audio.py`)
+
+Imports hand-corrected `data_transcripts_loops` CSVs and their verified PDS
+audio. Run `run_all.py --mission artemis-ii --step loops-comm` after `7f`.
+Step `1c` gives these transcripts priority over AI utterances on the same
+channel wherever their time coverage overlaps, even when either source splits
+the speech into different utterances. Whole overlapping AI utterances are
+superseded; the originals are preserved and boundary overhangs are audited.
+AI in omitted time intervals and crew PCD data remain available.
+
+Corrected JSONs live under `processed/transcripts/comm/loops`; prepared audio
+lives under `processed/comm_audio/loops`. Step `1c` publishes referenced audio
+under `web/comm/loops`. CSV UTC determines mission time and CSV audio offsets
+determine seeking. Clock discontinuities delimit coverage; calendar-day labels
+and loop SRT timing do not determine it. Unresolvable date-only rows remain in
+`untimed_segments`, outside the timeline. No GPU is needed.
+
+`processed/pds/loop_comm_import_report.json`, `loop_comm_merge_report.json`, and
+`superseded_comm.jsonl` report coverage, timing repairs and every replaced AI
+row. See the [replacement policy](../7_pds/README.md#corrected-voice-loop-transcripts-supersede-ai-comm)
+for details. Step `1d` uses the updated comm CSV and assesses the new corrected
+utterance identities; its append-only ledger retains historical assessments.
 
 ## Dependencies
 
-Strictly linear: **1a → 1b → 1c**. No external dependencies on other pipelines.
+Radio comm follows **1a → 1b → 1c**. The optional crew PCD branch follows
+**7f → 1b3 → 1c**. Corrected mission loops follow **7f → 1b4 → 1c** and
+supersede overlapping AI radio utterances before enrichment.
+
+### 1d: Transcript enrichment and milestone discovery (`1d_enrich_transcripts.py`)
+
+Merges `web/comm.csv` and `web/PAO.csv` chronologically, scores and categorizes
+each utterance, and extracts granular mission developments from the transcript.
+Nearby itinerary, flight-plan, science, photo, and video references provide
+context; they do not define which milestones may be discovered.
+
+Capture concrete steps such as crew walkout, departure, pad arrival, boarding,
+hatch closure, readiness approvals, burn ignition/cutoff, configuration changes,
+science session starts/completions, and anomaly resolution. Distinct stages and
+multiple developments in one utterance receive separate milestone objects.
+Future plans, generic explanations, and repetitive recaps do not establish new
+developments. A milestone need not have the highest importance score or the
+`milestone` category.
+
+Each assessment includes a `milestones` array (empty when none). Each milestone
+has a `title`, `status`, and exact supporting `evidence` quote from its utterance.
+Statuses are `started`, `in_progress`, `completed`, `confirmed` (for example a
+readiness approval), `observed`, `anomaly`, `resolved`, and `cancelled`.
+An optional `event_id` links a directly matching catalog reference. Missing
+catalog links do not prevent discovery; photo filenames and video IDs are
+media references and cannot be used as catalog event IDs.
+
+Outputs under `processed/transcripts/`:
+
+- `enriched_utterances.jsonl`: append-only assessment ledger, with a schema
+  version and a `milestones` array on each assessed utterance. Latest record
+  per utterance wins. Assessments from the previous schema are automatically
+  revisited on the next run, within any requested start/batch limits.
+- `detected_milestones.jsonl`: derived stream with one record per development,
+  including a deterministic occurrence `id`, `source_uid`, channel, title,
+  status, evidence, source text, and optional catalog `event_id`. The `t` field
+  is the utterance timestamp and `time_basis` is `report`; it is not a claimed
+  exact execution time. Rebuilt atomically at startup and after each saved
+  batch, so resuming or forcing reassessment removes superseded detections.
+  This replaces the old format that copied only utterances with event IDs.
+
+`web/comm_enriched.csv` and `web/PAO_enriched.csv` retain their existing column
+layouts. Their `event_id` column contains the first matched catalog link, if
+any; use the milestone JSONL for the full set of discovered developments.
+Preceding context includes already captured milestones to reduce repeated
+reports at batch boundaries. Following context helps interpret ambiguous
+activity without extracting events from context-only lines. `--context-lines`
+sets the number of utterances on each side (default 5).
+Occurrence IDs identify source evidence, not a
+globally reconciled event; distant recaps can still require editorial merging.
+
+```bash
+python 1_comm/1d_enrich_transcripts.py --mission artemis-ii
+python 1_comm/1d_enrich_transcripts.py --mission artemis-ii --test-batches 1
+```
+
+Requires `HGX_URL` and `HGX_API_KEY`. `--test-batches` still saves assessments
+and the derived milestone stream, but skips the final web CSV export.
+`--force` reassesses the selected range while retaining cached assessments
+outside it. Older ledger entries remain available on disk for audit.
 
 ## How to Run
 

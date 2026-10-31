@@ -90,22 +90,10 @@ def build_web_video_ia(mission: MissionConfig) -> None:
     print(f"  Saved {len(entries)} IA video entries to {out_path}")
 
 
-def build_web_pds_audio_transcripts(mission):
-    """Publish separate PDS indexes; don't overwrite comm/PAO alignment."""
-    from shared.io_api import load_jsonl
-    from shared.pds import atomic_json
-    prepared = prepared_media(mission)
-    for family, filename in (("audio", "audioPDS.json"), ("transcripts", "transcriptsPDS.json")):
-        entries = []
-        for r in load_jsonl(mission.data_dir / "processed" / "pds" / (family + ".jsonl")):
-            media = prepared.get("pds:" + r["uri"], {})
-            if media.get("status") == "ready" and Path(media["path"]).is_file():
-                entries.append({"id": r.get("lidvid") or r["uri"], "title": Path(r["path"]).name,
-                                "startTime": r.get("start_utc"), "endTime": r.get("stop_utc"),
-                                "channel": r.get("channel"), "source": "pds", "webUrl": media["url"],
-                                "assurance": r["assurance"]})
-        atomic_json(mission.web_dir / filename, entries)
-        print(f"  Saved {len(entries)} entries to {filename}")
+def remove_obsolete_pds_indexes(mission):
+    """Retire separate source indexes now that comm publishes playback and text."""
+    for filename in ("audioPDS.json", "transcriptsPDS.json"):
+        (mission.web_dir / filename).unlink(missing_ok=True)
 
 
 def build_web_video_yt(mission: MissionConfig) -> None:
@@ -155,7 +143,7 @@ def main():
     build_web_video_ia(mission)
     build_web_video_yt(mission)
     build_web_video_pds(mission)
-    build_web_pds_audio_transcripts(mission)
+    remove_obsolete_pds_indexes(mission)
     # IO supplies timing, but only confirmed public recordings reach web output.
     import importlib
     from shared.io_api import load_jsonl

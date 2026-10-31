@@ -1,25 +1,11 @@
 import { JSX, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./CommTest.module.css";
+import type { CommEntry } from "../types/transcripts.ts";
+import { loadComm } from "../data/comm.ts";
 
 const ASSETS_BASE = import.meta.env.DEV ? "/artemis-assets" : "https://media.artemisinrealtime.org";
 
 // ── Data shapes produced by 1c / 2k ────────────────────────────────────────
-
-interface CommSegment {
-  s: number;
-  e: number;
-  text: string;
-}
-
-interface CommEntry {
-  t: string;
-  s?: number;
-  d: number;
-  src?: string;
-  text: string;
-  lang: string;
-  segments?: CommSegment[];
-}
 
 interface PaoEntry {
   t: string;
@@ -30,18 +16,23 @@ type Row = { kind: "comm"; entry: CommEntry } | { kind: "pao"; entry: PaoEntry }
 
 // ── Channel helpers ───────────────────────────────────────────────────────────
 
-type ChannelId = "OE-1" | "OE-2" | "unknown";
+type ChannelId = "OE-1" | "OE-2" | "PCD" | "unknown";
 
 function channelFromSrc(src: string | undefined): ChannelId {
   if (!src) return "unknown";
+  if (src.startsWith("pcd/")) return "PCD";
   const m = src.match(/_OE_Comp_(\d+)/i);
   if (m?.[1] === "1") return "OE-1";
   if (m?.[1] === "2") return "OE-2";
+  const loop = src.match(/_oe([12])\./i);
+  if (loop?.[1] === "1") return "OE-1";
+  if (loop?.[1] === "2") return "OE-2";
   return "unknown";
 }
 
 /** Derive the date subfolder from the AAC filename, e.g. "2026-04-01/file.aac". */
 function aacPath(src: string): string {
+  if (src.includes("/")) return src;
   const m = src.match(/(\d{4}-\d{2}-\d{2})/);
   return m ? `${m[1]}/${src}` : src;
 }
@@ -83,7 +74,7 @@ interface FdGroup {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-const CHANNELS: ChannelId[] = ["OE-1", "OE-2"];
+const CHANNELS: ChannelId[] = ["OE-1", "OE-2", "PCD"];
 
 function CommTest(): JSX.Element {
   const [entries, setEntries] = useState<CommEntry[]>([]);
@@ -94,6 +85,7 @@ function CommTest(): JSX.Element {
   const [visible, setVisible] = useState<Record<ChannelId, boolean>>({
     "OE-1": true,
     "OE-2": true,
+    PCD: true,
     unknown: true,
   });
   const [showPao, setShowPao] = useState(true);
@@ -129,33 +121,11 @@ function CommTest(): JSX.Element {
     const base = `${ASSETS_BASE}/artemis-ii/web`;
 
     Promise.all([
-      fetch(`${base}/comm.csv`).then((r) => {
-        if (!r.ok) throw new Error(`comm.csv HTTP ${r.status}`);
-        return r.text();
-      }),
+      loadComm(base),
       fetch(`${base}/PAO.csv`).then((r) => (r.ok ? r.text() : Promise.resolve(""))),
     ])
-      .then(([commCsv, paoCsv]) => {
+      .then(([commEntries, paoCsv]) => {
         if (cancelled) return;
-
-        // comm.csv is pipe-delimited: t|s|d|src|text
-        // text is last so it may safely contain "|"
-        const enriched: CommEntry[] = [];
-        for (const line of commCsv.split("\n")) {
-          const trimmed = line.replace(/\r$/, "");
-          if (!trimmed) continue;
-          const idx1 = trimmed.indexOf("|");
-          const idx2 = trimmed.indexOf("|", idx1 + 1);
-          const idx3 = trimmed.indexOf("|", idx2 + 1);
-          const idx4 = trimmed.indexOf("|", idx3 + 1);
-          if (idx4 === -1) continue;
-          const t = trimmed.slice(0, idx1);
-          const s = parseFloat(trimmed.slice(idx1 + 1, idx2));
-          const d = parseFloat(trimmed.slice(idx2 + 1, idx3));
-          const src = trimmed.slice(idx3 + 1, idx4);
-          const text = trimmed.slice(idx4 + 1);
-          enriched.push({ t, s, d, src, text, lang: "en" });
-        }
 
         // PAO.csv is pipe-delimited: t|text
         const paoList: PaoEntry[] = [];
@@ -167,7 +137,7 @@ function CommTest(): JSX.Element {
           paoList.push({ t: trimmed.slice(0, idx), text: trimmed.slice(idx + 1) });
         }
 
-        setEntries(enriched);
+        setEntries(commEntries);
         setPaoEntries(paoList);
         setLoading(false);
       })
@@ -187,7 +157,7 @@ function CommTest(): JSX.Element {
   };
 
   const channelCounts = useMemo(() => {
-    const counts: Record<ChannelId, number> = { "OE-1": 0, "OE-2": 0, unknown: 0 };
+    const counts: Record<ChannelId, number> = { "OE-1": 0, "OE-2": 0, PCD: 0, unknown: 0 };
     for (const e of entries) counts[channelFromSrc(e.src)]++;
     return counts;
   }, [entries]);
@@ -227,12 +197,14 @@ function CommTest(): JSX.Element {
     const on = visible[ch];
     if (ch === "OE-1") return on ? styles.toggleOE1Active : styles.toggleOE1Inactive;
     if (ch === "OE-2") return on ? styles.toggleOE2Active : styles.toggleOE2Inactive;
+    if (ch === "PCD") return on ? styles.togglePCDActive : styles.togglePCDInactive;
     return "";
   }
 
   function channelBadgeClass(ch: ChannelId): string {
     if (ch === "OE-1") return styles.channelOE1;
     if (ch === "OE-2") return styles.channelOE2;
+    if (ch === "PCD") return styles.channelPCD;
     return styles.channelUnknown;
   }
 
@@ -249,7 +221,12 @@ function CommTest(): JSX.Element {
               {channelFromSrc(activeEntry.src)}
             </span>
             <span className={styles.playerTime}>{formatTime(activeEntry.t)}</span>
-            <span className={styles.playerText}>{activeEntry.text}</span>
+            <span className={styles.playerText}>
+              {activeEntry.speaker && (
+                <span className={styles.speaker}>{activeEntry.speaker}: </span>
+              )}
+              {activeEntry.text}
+            </span>
           </div>
           {/* eslint-disable-next-line jsx-a11y/media-has-caption -- no caption tracks for mission audio */}
           <audio
@@ -270,7 +247,7 @@ function CommTest(): JSX.Element {
         </div>
       )}
 
-      {loading && <p className={styles.status}>Loading comm.csv…</p>}
+      {loading && <p className={styles.status}>Loading transcripts…</p>}
       {error && <p className={styles.status}>Error: {error}</p>}
 
       {!loading && !error && (
@@ -377,7 +354,10 @@ function CommTest(): JSX.Element {
                     >
                       <div className={styles.time}>{formatTime(entry.t)}</div>
                       <div className={`${styles.channel} ${channelBadgeClass(ch)}`}>{ch}</div>
-                      <div className={styles.text}>{entry.text}</div>
+                      <div className={styles.text}>
+                        {entry.speaker && <span className={styles.speaker}>{entry.speaker}: </span>}
+                        {entry.text}
+                      </div>
                     </button>
                   );
                 })}

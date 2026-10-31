@@ -47,3 +47,6 @@ nul
 client_secrets.json
 
 ArtemisIIIRT(Charney)
+
+# Large PDFs
+*.pdf

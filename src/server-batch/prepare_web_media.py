@@ -1,7 +1,9 @@
-"""Prepare already compatible public video/audio on F; keep originals in place.
+"""Prepare already compatible public video on F.
 
 Uses existing IA/PDS evidence. Scientific images and unneeded MXFs are excluded.
 Copies across drives with SHA-256 verification; same-drive IA MP4s use hard links.
+PDS audio and supplied transcripts stay in raw/pds; comm steps prepare playback
+and normalized transcripts separately.
 """
 import argparse
 import hashlib
@@ -48,14 +50,13 @@ def prepare(mission):
             if r["status"] == "complete" and r.get("local_path"):
                 jobs.append(("ia:" + r["identifier"], Path(r["local_path"]),
                              mission.web_dir / "video" / "ia" / r["filename"], r))
-    for family in ("video", "audio", "transcripts"):
-        catalog = mission.data_dir / "processed" / "pds" / (family + ".jsonl")
-        if catalog.exists():
-            for line in catalog.read_text(encoding="utf-8").splitlines():
-                r = json.loads(line)
-                if Path(r["path"]).suffix.lower() in {".mp4", ".m4a", ".mp3", ".csv", ".srt"}:
-                    jobs.append(("pds:" + r["uri"], Path(r["path"]),
-                                 mission.web_dir / family / "pds" / r["bundle"] / r["relative"], r))
+    catalog = mission.data_dir / "processed" / "pds" / "video.jsonl"
+    if catalog.exists():
+        for line in catalog.read_text(encoding="utf-8").splitlines():
+            r = json.loads(line)
+            if Path(r["path"]).suffix.lower() == ".mp4":
+                jobs.append(("pds:" + r["uri"], Path(r["path"]),
+                             mission.web_dir / "video" / "pds" / r["bundle"] / r["relative"], r))
     state = {}
     failures = []
     for key, source, target, evidence in jobs:
@@ -73,9 +74,9 @@ def prepare(mission):
                     and previous.get("mtime_ns") == target.stat().st_mtime_ns):
                 state[key] = previous
                 continue
-            info = probe(source) if source.suffix.lower() not in {".csv", ".srt"} else {"streams": []}
+            info = probe(source)
             codecs = [s["codec_name"] for s in info["streams"] if s["codec_type"] in {"audio", "video"}]
-            if source.suffix.lower() not in {".csv", ".srt"} and (not codecs or any(c not in {"h264", "aac", "mp3"} for c in codecs)):
+            if not codecs or any(c not in {"h264", "aac", "mp3"} for c in codecs):
                 record.update(status="needs_conversion", codecs=codecs)
                 state[key] = record
                 continue

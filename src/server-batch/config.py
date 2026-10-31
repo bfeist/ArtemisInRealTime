@@ -17,6 +17,8 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 FLICKR_API_KEY = os.environ.get("FLICKR_API_KEY", "")
 IO_KEY = os.environ.get("IO_KEY", "")
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
+HGX_URL = os.environ.get("HGX_URL", "").rstrip("/")
+HGX_API_KEY = os.environ.get("HGX_API_KEY", "")
 
 # ── Directories ───────────────────────────────────────────────────────────────
 DATA_DIR = Path(os.environ.get("DATA_DIR", REPO_ROOT.parent / "ArtemisInRealTime_assets"))
@@ -247,6 +249,11 @@ class MissionConfig:
     @property
     def processed_transcripts(self) -> Path:
         return self.data_dir / "processed" / "transcripts"
+
+    @property
+    def comm_audio_cache(self) -> Path:
+        """Prepared playback audio; step 1c publishes only referenced recordings."""
+        return self.data_dir / "processed" / "comm_audio"
 
     @property
     def io_cache(self) -> Path:

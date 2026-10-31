@@ -11,7 +11,7 @@ from config import MissionConfig
 from shared import io_api, ia_video_downloads
 from shared.photos_ledger import LedgerRecord, save_ledger
 from asset_status import photo_rows
-from prepare_web_media import copy_verified
+from prepare_web_media import copy_verified, prepare
 
 ledger = importlib.import_module("3_photos.4c_build_ledger")
 web = importlib.import_module("3_photos.4e_web_photos_json")
@@ -64,6 +64,53 @@ class AssetRefreshTest(unittest.TestCase):
         Image.new("RGB", (4, 4), "blue").save(source)
         tiers = importlib.import_module("3_photos.4d_generate_tiers")
         self.assertTrue(tiers._source_jpeg_bytes("manual", source).startswith(b"\xff\xd8"))
+
+    def test_web_media_keeps_audio_and_transcripts_as_sources_and_prepares_video(self):
+        catalog_dir = self.mission.data_dir / "processed" / "pds"
+        catalog_dir.mkdir(parents=True)
+        sources = {}
+        for family, filename in (("audio", "crew.m4a"), ("video", "clip.mp4"),
+                                 ("transcripts", "crew.csv")):
+            source = self.mission.pds_raw / filename
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(family.encode())
+            sources[family] = source
+            record = {"uri": filename, "path": str(source), "bundle": "test",
+                      "relative": filename, "size": source.stat().st_size}
+            (catalog_dir / (family + ".jsonl")).write_text(json.dumps(record) + "\n")
+        state_path = self.mission.data_dir / "processed" / "web-media.json"
+        state_path.write_text(json.dumps({
+            "pds:crew.m4a": {"url": "/audio/pds/test/crew.m4a"},
+            "pds:crew.csv": {"url": "/transcripts/pds/test/crew.csv"}}))
+        with patch("prepare_web_media.probe", return_value={"streams": [
+                {"codec_type": "video", "codec_name": "h264"}]}) as probe:
+            prepare(self.mission)
+        probe.assert_called_once_with(sources["video"])
+        self.assertFalse((self.mission.web_dir / "audio").exists())
+        self.assertFalse((self.mission.web_dir / "transcripts").exists())
+        self.assertEqual(sources["audio"].read_bytes(), b"audio")
+        self.assertEqual(sources["transcripts"].read_bytes(), b"transcripts")
+        self.assertEqual((self.mission.web_dir / "video/pds/test/clip.mp4").read_bytes(), b"video")
+        self.assertEqual(set(json.loads(state_path.read_text())), {"pds:clip.mp4"})
+
+    def test_pds_source_indexes_are_retired_even_with_stale_prepared_state(self):
+        video_web = importlib.import_module("2_video.2g_web_video")
+        catalog_dir = self.mission.data_dir / "processed" / "pds"
+        catalog_dir.mkdir(parents=True)
+        transcript = self.mission.web_dir / "transcripts" / "crew.csv"
+        transcript.parent.mkdir(parents=True)
+        transcript.write_bytes(b"supplied transcript")
+        record = {"uri": "crew.csv", "path": "raw/crew.csv", "assurance": "verified"}
+        (catalog_dir / "transcripts.jsonl").write_text(json.dumps(record) + "\n")
+        for filename in ("audioPDS.json", "transcriptsPDS.json"):
+            (self.mission.web_dir / filename).write_text('[{"webUrl":"/old/source"}]')
+        (self.mission.data_dir / "processed" / "web-media.json").write_text(json.dumps({
+            "pds:crew.csv": {"status": "ready", "path": str(transcript), "url": "/transcripts/crew.csv"},
+            "pds:old.m4a": {"status": "ready", "path": "old.m4a", "url": "/audio/old.m4a"}}))
+        for _ in range(2):
+            video_web.remove_obsolete_pds_indexes(self.mission)
+            self.assertFalse((self.mission.web_dir / "audioPDS.json").exists())
+            self.assertFalse((self.mission.web_dir / "transcriptsPDS.json").exists())
 
     def test_orion_numeric_id_does_not_release_or_retime_crew_photo(self):
         from shared.pds_photos import merge_pds_photos

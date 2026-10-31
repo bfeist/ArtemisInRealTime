@@ -1,30 +1,37 @@
-"""Step 1c — Produce web-ready comm CSV from transcripts.
+"""Step 1c — Publish final comm transcripts and reconcile playback audio.
 
-Reads per-file transcript JSONs and produces a single pipe-delimited
-comm.csv for the web frontend, sorted chronologically.
-AAC files are written directly to web/comm/ by step 1b.
+Reads per-file transcript JSONs and produces comm.json for the web frontend
+and pipe-delimited comm.csv for batch consumers, sorted chronologically.
+Audio imports prepare a cache in processed/comm_audio/. After filtering and
+loop precedence, this step publishes only referenced audio under web/comm/.
 
 Output columns: t|s|d|src|text
   t   — ISO-8601 UTC timestamp of the segment
-  s   — segment start offset (seconds) within the AAC file
+  s   — segment start offset (seconds) within the audio file
   d   — segment duration (seconds)
-  src — AAC filename (relative to web/comm/)
+  src — audio source relative to web/comm/ (legacy basenames use a date folder)
   text — transcript text
 
 Input:  {data_dir}/{mission}/processed/transcripts/comm/{date}/*.json
 Output: {data_dir}/{mission}/web/comm.csv
+        {data_dir}/{mission}/web/comm.json (optional speaker per utterance)
 """
 
 import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import MISSIONS, MissionConfig
+from shared.pds import atomic_json
+from shared.pds_loops import apply_loop_precedence
+from shared.comm_audio import prepare_comm_audio, reconcile_comm_audio
+from shared.ia_video_downloads import plan_lock
+from shared.pds_comm import ensure_pcd_audio
 
 def _offset_utc(utc_str: str, seconds: float) -> str:
     """Return a new ISO-8601 UTC string shifted by `seconds`."""
@@ -56,6 +63,9 @@ def build_web_comm(mission: MissionConfig) -> None:
 
     # Collect all transcript JSONs, building comm entries and CSV rows
     transcripts = []  # list of (t, s, d, src, text) tuples for comm.csv
+    web_entries = {}
+    sources = {}
+    pcd_transcripts = {}
 
     # Hours to add to convert filename-embedded local time → UTC.
     # Applied only to JSONs produced by the old 1b code that did not apply the
@@ -84,36 +94,74 @@ def build_web_comm(mission: MissionConfig) -> None:
             base_utc = raw_utc
         source = data.get("source", json_path.stem)
         lang = data.get("language", "en")
-        aac_name = json_path.stem + ".aac"
+        aac_name = data.get("web_src") or json_path.stem + ".aac"
+        supplied = data.get("transcript_source") == "pds_supplied"
+        if data.get("source_kind") == "crew_onboard":
+            pcd_transcripts[aac_name] = (json_path, data)
+        if data.get("source_kind") in {"crew_onboard", "mission_voice_loop"}:
+            sources[aac_name] = {key: data.get(key) for key in (
+                "source_kind", "channel", "nasa_id", "utcTime", "time_source",
+                "transcript_source", "pds_products", "pds_transcripts", "authority_intervals")}
 
         for seg in data.get("segments", []):
             text = seg.get("text", "").strip()
-            if not text or text in HALLUCINATIONS:
+            if not text or (not supplied and text in HALLUCINATIONS):
                 continue
+            text = " ".join(text.splitlines())
+            speaker = " ".join((seg.get("speaker") or "").split()).strip()
 
             seg_start = seg.get("start", 0)
             seg_end = seg.get("end", 0)
-            seg_utc = _offset_utc(base_utc, seg_start) if base_utc else ""
+            seg_utc = seg.get("utcTime") or (_offset_utc(base_utc, seg_start) if base_utc else "")
 
-            transcripts.append((
+            row = (
                 seg_utc,
                 str(round(seg_start, 3)),
                 str(round(seg_end - seg_start, 3)),
                 aac_name,
-                text,
-            ))
+                f"[{speaker}] {text}" if speaker else text,
+            )
+            transcripts.append(row)
+            entry = {"t": seg_utc, "s": round(seg_start, 3),
+                     "d": round(seg_end - seg_start, 3), "src": aac_name, "text": text}
+            if speaker:
+                entry["speaker"] = speaker
+            web_entries[row] = entry
+
+    transcripts = apply_loop_precedence(transcripts, sources, mission.data_dir / "processed/pds")
 
     # Sort by UTC (column 0)
-    transcripts.sort(key=lambda r: r[0])
+    transcripts.sort(key=lambda r: datetime.fromisoformat(r[0].replace("Z", "+00:00"))
+                     if r[0] else datetime.min.replace(tzinfo=timezone.utc))
+
+    # Routine builds also upgrade cached PCD audio without WhisperX or PDS retrieval.
+    # Compact loop AAC is already suitable and is kept byte-for-byte unchanged.
+    for src in sorted({row[3] for row in transcripts} & pcd_transcripts.keys()):
+        path, data = pcd_transcripts[src]
+        if ensure_pcd_audio(mission, data):
+            atomic_json(path, data)
+            print(f"  Updated PCD AAC encoding: {src}", flush=True)
+        sources[src]["audio_encoding"] = data["audio_encoding"]
+
+    # Validate all playback files before publishing indexes or retiring old audio.
+    # On existing installations this also adopts legacy web files into the cache.
+    audio_manifest = prepare_comm_audio(mission, transcripts)
 
     # Write pipe-delimited comm.csv
     out_path = mission.web_dir / "comm.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
+    tmp = out_path.with_name(out_path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         for row in transcripts:
             f.write("|".join(row) + "\n")
+    os.replace(tmp, out_path)
+    atomic_json(mission.web_dir / "comm.json", [web_entries[row] for row in transcripts])
 
     print(f"  Saved {len(transcripts)} comm entries to {out_path}")
+    referenced = {row[3] for row in transcripts}
+    atomic_json(mission.web_dir / "comm_sources.json",
+                {src: metadata for src, metadata in sources.items() if src in referenced})
+    reconcile_comm_audio(mission, audio_manifest)
 
     # Stats
     if transcripts:
@@ -123,15 +171,16 @@ def build_web_comm(mission: MissionConfig) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Produce web-ready comm JSON")
+    parser = argparse.ArgumentParser(description="Publish comm transcripts and reconcile web audio")
     parser.add_argument("--mission", required=True, choices=list(MISSIONS.keys()))
     args = parser.parse_args()
 
     mission = MISSIONS[args.mission]
     mission.ensure_dirs()
 
-    print(f"\n=== Step 1c: Web Comm JSON — {mission.name} ===\n")
-    build_web_comm(mission)
+    print(f"\n=== Step 1c: Publish comm — {mission.name} ===\n")
+    with plan_lock(mission.data_dir / "processed" / "comm_audio_manifest.json"):
+        build_web_comm(mission)
 
 
 if __name__ == "__main__":

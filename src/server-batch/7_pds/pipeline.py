@@ -519,6 +519,7 @@ def media_type(r):
 
 
 def integrate(mission):
+    from shared.pds_comm import enrich_pcd
     c = db(mission)
     catalogs = {k: [] for k in ("photos", "video", "audio", "transcripts", "science")}
     for r in c.execute("SELECT * FROM remote WHERE active=1 AND status LIKE 'verified%'"):
@@ -545,6 +546,7 @@ def integrate(mission):
                         - datetime.fromisoformat(record["start_utc"].replace("Z", "+00:00"))).total_seconds()
             except ValueError:
                 pass
+        enrich_pcd(record, mission)
         catalogs[media_type(r)].append(record)
     output = mission.data_dir / "processed" / "pds"
     output.mkdir(parents=True, exist_ok=True)

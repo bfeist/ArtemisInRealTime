@@ -2,8 +2,8 @@
 
 Processes the daily "Artemis II Mission Audio" ZIP files that contain
 PAO/ground-track recordings.  These are separate from the OE Comp files
-processed by step 1b but share the same output directories so that step
-1c (web_comm.csv build) picks them all up together.
+processed by step 1b. They remain processing inputs: step 1c excludes this
+duplicate PAO material from the published comm transcript and audio.
 
 For each ZIP matching ``*Artemis II Mission Audio.zip`` in mission.raw_comm:
   1. Extract (if not already extracted) to a sibling folder in raw/comm/.
@@ -12,11 +12,11 @@ For each ZIP matching ``*Artemis II Mission Audio.zip`` in mission.raw_comm:
      offset used by step 1b).
   4. Transcribe with WhisperX large-v3.
   5. Write per-file JSON to processed/transcripts/comm/{date}/.
-  6. Convert to AAC for the web player in web/comm/{date}/.
+  6. Cache AAC in processed/comm_audio/{date}/.
 
 Input:  {data_dir}/{mission}/raw/comm/*Artemis II Mission Audio.zip
 Output: {data_dir}/{mission}/processed/transcripts/comm/{date}/*.json
-        {data_dir}/{mission}/web/comm/{date}/*.aac
+        {data_dir}/{mission}/processed/comm_audio/{date}/*.aac
 """
 
 import argparse
@@ -38,6 +38,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import MISSIONS, MissionConfig
+from shared.comm_encoding import encode_comm_aac
 
 # ---------------------------------------------------------------------------
 # WAV filename pattern for Mission Audio files:
@@ -73,8 +74,6 @@ INITIAL_PROMPT = (
 )
 
 WHISPERX_SAMPLE_RATE = 16000
-AAC_BITRATE = "64k"
-AAC_SAMPLE_RATE = 22050
 
 
 # ---------------------------------------------------------------------------
@@ -89,21 +88,8 @@ def _ffmpeg_exe() -> str:
 
 
 def convert_wav_to_aac(wav_path: Path, aac_path: Path) -> None:
-    """Convert a WAV file to AAC (m4a) using ffmpeg."""
-    aac_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        _ffmpeg_exe(),
-        "-hide_banner", "-loglevel", "error",
-        "-nostdin", "-y",
-        "-i", str(wav_path),
-        "-ac", "1",
-        "-ar", str(AAC_SAMPLE_RATE),
-        "-c:a", "aac",
-        "-b:a", AAC_BITRATE,
-        "-movflags", "+faststart",
-        str(aac_path),
-    ]
-    subprocess.run(cmd, check=True)
+    """Use the common comm AAC encoding."""
+    encode_comm_aac(wav_path, aac_path)
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +281,7 @@ def transcribe_wav(
         "source": str(wav_path.name),
         "utcTime": utc_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tz_corrected": True,
+        "web_src": utc_time.strftime("%Y-%m-%d") + "/" + wav_path.stem + ".aac",
         "duration": round(duration, 2),
         "language": language,
         "model": "large-v3",
@@ -313,7 +300,7 @@ def transcribe_wav(
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    # AAC for web player
+    # Prepared audio stays in processed/; step 1c controls publication.
     _aac_dir = aac_dir if aac_dir is not None else output_dir
     aac_path = _aac_dir / (wav_path.stem + ".aac")
     if not aac_path.exists():
@@ -348,7 +335,7 @@ def transcribe_mission_audio(
     print(f"  Found {len(zips)} Mission Audio ZIP(s)")
 
     transcript_dir = mission.processed_transcripts / "comm"
-    web_comm_dir = mission.web_dir / "comm"
+    audio_cache = mission.comm_audio_cache
 
     all_wavs: list[tuple[Path, dt.datetime]] = []
     for zip_path in zips:
@@ -379,7 +366,7 @@ def transcribe_mission_audio(
 
     if not to_process:
         print("  Nothing to transcribe.")
-        _backfill_aac(all_wavs, transcript_dir, web_comm_dir)
+        _backfill_aac(all_wavs, transcript_dir, audio_cache)
         return
 
     device = os.environ.get("WHISPER_DEVICE", "cuda")
@@ -395,7 +382,7 @@ def transcribe_mission_audio(
     for i, (wav_path, utc_time) in enumerate(to_process, 1):
         date_str = utc_time.strftime("%Y-%m-%d")
         out_dir = transcript_dir / date_str
-        aac_dir = web_comm_dir / date_str
+        aac_dir = audio_cache / date_str
 
         try:
             result = transcribe_wav(wav_path, utc_time, out_dir, resources, force=force, aac_dir=aac_dir)
@@ -421,27 +408,27 @@ def transcribe_mission_audio(
         f"{skipped} skipped (short/hallucination), {errors} errors"
     )
 
-    _backfill_aac(all_wavs, transcript_dir, web_comm_dir)
+    _backfill_aac(all_wavs, transcript_dir, audio_cache)
 
 
 def _backfill_aac(
     all_wavs: list[tuple[Path, dt.datetime]],
     transcript_dir: Path,
-    web_comm_dir: Path,
+    audio_cache: Path,
 ) -> None:
-    """Create any AAC files missing for already-transcribed WAVs."""
+    """Backfill cached AACs without publishing excluded Mission Audio."""
     needed = [
         (wav_path, utc_time)
         for wav_path, utc_time in all_wavs
         if (transcript_dir / utc_time.strftime("%Y-%m-%d") / (wav_path.stem + ".json")).exists()
-        and not (web_comm_dir / utc_time.strftime("%Y-%m-%d") / (wav_path.stem + ".aac")).exists()
+        and not (audio_cache / utc_time.strftime("%Y-%m-%d") / (wav_path.stem + ".aac")).exists()
     ]
     if not needed:
         return
     print(f"\n  Backfilling {len(needed)} missing AAC file(s)...")
     ok = err = 0
     for wav_path, utc_time in needed:
-        aac_path = web_comm_dir / utc_time.strftime("%Y-%m-%d") / (wav_path.stem + ".aac")
+        aac_path = audio_cache / utc_time.strftime("%Y-%m-%d") / (wav_path.stem + ".aac")
         aac_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             convert_wav_to_aac(wav_path, aac_path)

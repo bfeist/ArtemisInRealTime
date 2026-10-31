@@ -192,6 +192,17 @@
   color: #888888;
 }
 
+.channelPCD,
+.togglePCDActive {
+  background: #173c2b;
+  color: #95e2b5;
+}
+
+.togglePCDInactive {
+  background: #1a1a1a;
+  color: #537260;
+}
+
 .channelPao {
   background: #1e1e1e;
   color: #555555;
@@ -213,6 +224,11 @@
   font-size: 0.85rem;
   line-height: 1.4;
   color: #cccccc;
+}
+
+.speaker {
+  color: #eeeeee;
+  font-weight: 700;
 }
 
 .empty {

@@ -34,9 +34,17 @@ scripts remain available for diagnostics; the legacy all-steps command also
 includes costly download/transcription work and is not the routine refresh.
 
 New Flickr/NASA/EOL originals go to D:. Processing reads originals on either
-drive, keeping existing F: copies in place. Public compressed IA/PDS video,
-PDS audio and supplied transcripts are prepared under F:'s `web/` with separate
-indexes. Same-drive IA MP4s use hard links; cross-drive PDS copies are verified
+drive, keeping existing F: copies in place. Public compressed IA/PDS video
+is prepared under F:'s `web/` with separate indexes. PDS audio and supplied
+transcript originals stay in D:'s `raw/pds`; comm imports cache playback under
+`processed/comm_audio`, with normalized transcripts under `processed/transcripts`.
+Step `1c` publishes the final `comm.csv`/`comm.json` and only the audio they
+reference under `web/comm`. After the indexes save successfully, it moves unused
+web audio back into the cache and records a reconciliation receipt in `processed/`.
+The routine build stage and all comm/PDS integration groups include this step.
+The generic media build does not create `web/audio`,
+`web/transcripts`, `audioPDS.json`, or `transcriptsPDS.json`. Same-drive IA MP4s
+use hard links; cross-drive PDS copies are verified
 against stored SHA-256 evidence. Unsupported codecs are reported for conversion.
 IO-only records never qualify for publication by themselves. User `unneeded`
 video decisions and replacement-coverage notes survive rediscovery.

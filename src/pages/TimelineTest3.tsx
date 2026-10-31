@@ -27,6 +27,8 @@
 import { JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./TimelineTest3.module.css";
 import type { Photo } from "../types/photos.ts";
+import { type CommEntry, transcriptLabel } from "../types/transcripts.ts";
+import { loadComm } from "../data/comm.ts";
 import { usePlaybackClock } from "../hooks/usePlaybackClock.ts";
 
 const ASSETS_BASE = import.meta.env.DEV ? "/artemis-assets" : "https://media.artemisinrealtime.org";
@@ -57,13 +59,6 @@ interface Itinerary {
   source_asflown: string;
   events: MissionEvent[];
   phases?: Phase[];
-}
-
-interface CommEntry {
-  t: string; // ISO-8601 UTC
-  d: number; // duration seconds
-  src?: string;
-  text: string;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -714,7 +709,7 @@ function DetailStrip({
           key: e.t + e.text.slice(0, 8),
           leftPct: toLocalPct(cs),
           widthPct: Math.max(((ce - cs) / windowDurationMs) * 100, 0.2),
-          title: e.text,
+          title: transcriptLabel(e),
         };
       });
   }, [commEntries, windowStartMs, windowEndMs, windowDurationMs, toLocalPct]);
@@ -1001,7 +996,7 @@ function MagnifierStrip({
           key: e.t + e.text.slice(0, 8),
           startPx: toCenterPx(s),
           widthPx: Math.max((end - s) / msPerPx, 1),
-          title: e.text,
+          title: transcriptLabel(e),
         };
       });
   }, [commEntries, windowStartMs, windowEndMs, msPerPx, toCenterPx]);
@@ -1150,27 +1145,7 @@ function TimelineTest3(): JSX.Element {
       r.ok ? (r.json() as Promise<Photo[]>) : Promise.resolve([] as Photo[])
     );
 
-    const fetchComm = fetch(`${base}/comm.csv`).then((r) => {
-      if (!r.ok) return [] as CommEntry[];
-      return r.text().then((csv) => {
-        const entries: CommEntry[] = [];
-        for (const line of csv.split("\n")) {
-          const trimmed = line.replace(/\r$/, "");
-          if (!trimmed) continue;
-          const idx1 = trimmed.indexOf("|");
-          const idx2 = trimmed.indexOf("|", idx1 + 1);
-          const idx3 = trimmed.indexOf("|", idx2 + 1);
-          const idx4 = trimmed.indexOf("|", idx3 + 1);
-          if (idx4 === -1) continue;
-          const t = trimmed.slice(0, idx1);
-          const d = parseFloat(trimmed.slice(idx2 + 1, idx3));
-          const src = trimmed.slice(idx3 + 1, idx4);
-          const text = trimmed.slice(idx4 + 1);
-          entries.push({ t, d, src, text });
-        }
-        return entries;
-      });
-    });
+    const fetchComm = loadComm(base);
 
     Promise.all([fetchItinerary, fetchPhotos, fetchComm])
       .then(([itin, ph, comm]) => {

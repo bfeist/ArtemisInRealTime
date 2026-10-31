@@ -5,6 +5,8 @@ WhisperX (large-v3, CUDA), and saves per-file JSON transcripts.
 
 Input:  {data_dir}/{mission}/raw/comm/**/*.wav
 Output: {data_dir}/{mission}/processed/transcripts/comm/{date}/{filename}.json
+        {data_dir}/{mission}/processed/comm_audio/{date}/{filename}.aac
+Step 1c publishes only audio used by the final transcript.
 """
 
 import argparse
@@ -25,6 +27,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import MISSIONS, MissionConfig
+from shared.comm_audio import cached_audio_path
+from shared.comm_encoding import AAC_BITRATE, AAC_SAMPLE_RATE, encode_comm_aac
 
 # WAV filename pattern:
 # 0000000000_1_OE_Comp_1_2026-04-01_12_42_51_by_ui_startdate_asc.wav
@@ -55,8 +59,6 @@ INITIAL_PROMPT = (
 )
 
 WHISPERX_SAMPLE_RATE = 16000
-AAC_BITRATE = "64k"
-AAC_SAMPLE_RATE = 22050
 
 
 def _ffmpeg_exe() -> str:
@@ -67,21 +69,8 @@ def _ffmpeg_exe() -> str:
 
 
 def convert_wav_to_aac(wav_path: Path, aac_path: Path) -> None:
-    """Convert a WAV file to AAC (m4a) using ffmpeg."""
-    aac_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        _ffmpeg_exe(),
-        "-hide_banner", "-loglevel", "error",
-        "-nostdin", "-y",
-        "-i", str(wav_path),
-        "-ac", "1",
-        "-ar", str(AAC_SAMPLE_RATE),
-        "-c:a", "aac",
-        "-b:a", AAC_BITRATE,
-        "-movflags", "+faststart",
-        str(aac_path),
-    ]
-    subprocess.run(cmd, check=True)
+    """Use the shared mono 22,050 Hz, 64 kbps ADTS AAC playback profile."""
+    encode_comm_aac(wav_path, aac_path)
 
 
 def load_wav_audio(wav_path: Path, target_sr: int = WHISPERX_SAMPLE_RATE) -> np.ndarray:
@@ -203,6 +192,7 @@ def transcribe_wav(
         "source": str(wav_path.name),
         "utcTime": utc_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tz_corrected": True,  # utcTime is genuine UTC (tz offset applied by 1b)
+        "web_src": utc_time.strftime("%Y-%m-%d") + "/" + wav_path.stem + ".aac",
         "duration": round(duration, 2),
         "language": language,
         "model": "large-v3",
@@ -221,7 +211,7 @@ def transcribe_wav(
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    # Create AAC in web comm dir
+    # Prepare a cached derivative; step 1c decides whether to publish it.
     _aac_dir = aac_dir if aac_dir is not None else output_dir
     aac_path = _aac_dir / (wav_path.stem + ".aac")
     if not aac_path.exists():
@@ -315,7 +305,7 @@ def transcribe_comm(
 
     transcript_dir = mission.processed_transcripts / "comm"
     transcript_dir.mkdir(parents=True, exist_ok=True)
-    web_comm_dir = mission.web_dir / "comm"
+    audio_cache = mission.comm_audio_cache
 
     # Check how many are already done
     already_done = 0
@@ -353,7 +343,7 @@ def transcribe_comm(
         for i, (wav_path, utc_time) in enumerate(to_process, 1):
             date_str = utc_time.strftime("%Y-%m-%d")
             out_dir = transcript_dir / date_str
-            aac_dir = web_comm_dir / date_str
+            aac_dir = audio_cache / date_str
 
             try:
                 result = transcribe_wav(wav_path, utc_time, out_dir, resources, force=force, aac_dir=aac_dir)
@@ -375,20 +365,23 @@ def transcribe_comm(
         print(f"\n  Done in {elapsed:.1f}s: {transcribed} transcribed, "
               f"{skipped} skipped (short/hallucination), {errors} errors")
 
-    # Backfill AAC files for any existing transcript that's missing its pair
-    aac_needed = [
-        (wav_path, utc_time)
-        for wav_path, utc_time in wav_files
-        if (transcript_dir / utc_time.strftime("%Y-%m-%d") / (wav_path.stem + ".json")).exists()
-        and not (web_comm_dir / utc_time.strftime("%Y-%m-%d") / (wav_path.stem + ".aac")).exists()
-    ]
+    # Backfill the processing cache, never the publication folder. Historical
+    # transcripts remain available even when corrected loops supersede them.
+    aac_needed = []
+    for wav_path, utc_time in wav_files:
+        transcript = transcript_dir / utc_time.strftime("%Y-%m-%d") / (wav_path.stem + ".json")
+        if not transcript.exists():
+            continue
+        data = json.loads(transcript.read_text(encoding="utf-8"))
+        # Old transcripts use the filename date; new ones have an explicit path.
+        aac_path = cached_audio_path(mission, data.get("web_src") or wav_path.stem + ".aac")
+        if not aac_path.exists():
+            aac_needed.append((wav_path, aac_path))
     if aac_needed:
         print(f"\n  Backfilling {len(aac_needed)} missing AAC file(s)...")
         aac_ok = 0
         aac_err = 0
-        for wav_path, utc_time in aac_needed:
-            date_str = utc_time.strftime("%Y-%m-%d")
-            aac_path = web_comm_dir / date_str / (wav_path.stem + ".aac")
+        for wav_path, aac_path in aac_needed:
             aac_path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 convert_wav_to_aac(wav_path, aac_path)

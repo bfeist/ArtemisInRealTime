@@ -24,6 +24,8 @@
 import { CSSProperties, JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./TimelineTest2.module.css";
 import type { Photo } from "../types/photos.ts";
+import { type CommEntry, transcriptLabel } from "../types/transcripts.ts";
+import { loadComm } from "../data/comm.ts";
 import { usePlaybackClock } from "../hooks/usePlaybackClock.ts";
 
 const ASSETS_BASE = import.meta.env.DEV ? "/artemis-assets" : "https://media.artemisinrealtime.org";
@@ -54,13 +56,6 @@ interface Itinerary {
   source_asflown: string;
   events: MissionEvent[];
   phases?: Phase[];
-}
-
-interface CommEntry {
-  t: string;
-  d: number;
-  src?: string;
-  text: string;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -739,7 +734,7 @@ function DetailStrip({
         }
         seenBuckets.add(bucket);
       }
-      results.push({ key: `c${idx}`, leftPct, widthPct, title: e.text });
+      results.push({ key: `c${idx}`, leftPct, widthPct, title: transcriptLabel(e) });
       idx++;
     }
     return results;
@@ -927,27 +922,7 @@ function TimelineTest2(): JSX.Element {
       r.ok ? (r.json() as Promise<Photo[]>) : Promise.resolve([] as Photo[])
     );
 
-    const fetchComm = fetch(`${base}/comm.csv`).then((r) => {
-      if (!r.ok) return [] as CommEntry[];
-      return r.text().then((csv) => {
-        const entries: CommEntry[] = [];
-        for (const line of csv.split("\n")) {
-          const trimmed = line.replace(/\r$/, "");
-          if (!trimmed) continue;
-          const idx1 = trimmed.indexOf("|");
-          const idx2 = trimmed.indexOf("|", idx1 + 1);
-          const idx3 = trimmed.indexOf("|", idx2 + 1);
-          const idx4 = trimmed.indexOf("|", idx3 + 1);
-          if (idx4 === -1) continue;
-          const t = trimmed.slice(0, idx1);
-          const d = parseFloat(trimmed.slice(idx2 + 1, idx3));
-          const src = trimmed.slice(idx3 + 1, idx4);
-          const text = trimmed.slice(idx4 + 1);
-          entries.push({ t, d, src, text });
-        }
-        return entries;
-      });
-    });
+    const fetchComm = loadComm(base);
 
     Promise.all([fetchItinerary, fetchPhotos, fetchComm])
       .then(([itin, ph, comm]) => {

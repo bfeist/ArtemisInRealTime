@@ -34,8 +34,10 @@ from config import MISSIONS
 STEP_GROUPS: dict[str, list[str]] = {
     "pds-plan": ["7a", "7b", "7c", "7g"],
     "pds-fetch": ["7d", "7e", "7g"],
-    "pds-integrate": ["7f", "4a", "4b", "4c", "4d", "4e", "7g"],
-    "pds-refresh": ["7a", "7b", "7c", "7d", "7e", "7f", "4a", "4b", "4c", "4d", "4e", "7g"],
+    "pds-integrate": ["7f", "1b3", "1b4", "1c", "4a", "4b", "4c", "4d", "4e", "7g"],
+    "pds-refresh": ["7a", "7b", "7c", "7d", "7e", "7f", "1b3", "1b4", "1c", "4a", "4b", "4c", "4d", "4e", "7g"],
+    "pcd-comm": ["1b3", "1c"],
+    "loops-comm": ["1b4", "1c"],
     # Re-check all external photo sources for new arrivals, download them,
     # and rebuild the ledger + web tiers + photos.json.
     # All download steps are idempotent — safe to re-run at any time.
@@ -50,7 +52,11 @@ STEP_GROUPS: dict[str, list[str]] = {
 STEPS = [
     ("1a", "1_comm.1a_download_ia_zips", "Download comm audio ZIPs", {"artemis-ii"}),
     ("1b", "1_comm.1b_transcribe", "Transcribe comm audio (WhisperX)", {"artemis-ii"}),
-    ("1c", "1_comm.1c_web_comm", "Produce web-ready comm JSON", {"artemis-ii"}),
+    ("1b3", "1_comm.1b3_pcd_audio", "Import PDS crew PCD audio and transcripts", {"artemis-ii"}),
+    ("1b4", "1_comm.1b4_loop_audio", "Import corrected PDS voice-loop transcripts", {"artemis-ii"}),
+    ("1c", "1_comm.1c_web_comm", "Publish comm transcripts and reconcile web audio", {"artemis-ii"}),
+    ("1d", "1_comm.1d_enrich_transcripts", "Enrich comm + PAO transcripts and discover milestones", {"artemis-ii"}),
+    ("1e", "1_comm.1e_mission_context", "Build hierarchical mission activity tree and crew timelines", {"artemis-ii"}),
     ("2a", "2_video.2a_ia_video_discover", "Discover IA video items", None),
     ("2b", "2_video.2b_ia_video_download", "Download IA video MP4s", None),
     ("2d", "2_video.2d_yt_metadata", "Fetch YouTube metadata", None),
