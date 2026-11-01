@@ -3,7 +3,7 @@
 Merges space-to-ground comm (web/comm.csv) and public affairs commentary (web/PAO.csv)
 chronologically, groups them into context windows alongside mission itinerary events
 (web/itinerary.json), and streams assessments from LLM-Alpha-512K (GLM-5.3-Flash) via
-HGX_URL.
+HGX_URL, or qwen3.8-flash-next via a local Strata instance (--backend strata).
 
 Live-streams both the model's reasoning tokens and structured JSONL output to the
 terminal as it runs, and persists every assessed utterance immediately to an
@@ -26,96 +26,42 @@ import json
 import os
 import sys
 import time
+import traceback
 import urllib.error
 import urllib.request
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import HGX_API_KEY, HGX_URL, MISSIONS, MissionConfig  # noqa: E402
+from config import (  # noqa: E402
+    HGX_API_KEY, HGX_URL, MISSIONS, STRATA_API_KEY, STRATA_MODEL, STRATA_URL,
+    MissionConfig,
+)
 from mission_context import (  # noqa: E402
     MissionContextIndex,
     infer_crew_members,
     normalize_crew_list,
 )
 
+from transcript_stages import (  # noqa: E402
+    CATEGORIES, EXTRACTION_SYSTEM_PROMPT, LABEL_SYSTEM_PROMPT, MILESTONE_STATUSES,
+    anchored_milestones, build_label_prompt, involved_crew, parse_extraction,
+)
+
 DEFAULT_MODEL = "LLM-Alpha-512K"
 ASSESSMENT_VERSION = 2
-MILESTONE_STATUSES = {
-    "started", "in_progress", "completed", "confirmed", "observed",
-    "anomaly", "resolved", "cancelled",
-}
+PROMPT_VERSION = 3  # Increment for prompt-builder changes, independently of the schema.
+PROVENANCE_FIELDS = (
+    "backend", "model", "model_provenance", "provenance_recorded_at",
+    "run_id", "batch", "assessed_at", "prompt_version", "system_prompt_sha256",
+    "user_prompt_sha256", "generation_settings", "stage_provenance",
+)
+SYSTEM_PROMPT = LABEL_SYSTEM_PROMPT
 
-CATEGORIES = {
-    "maneuver",
-    "systems",
-    "photography",
-    "science",
-    "crew_life",
-    "milestone",
-    "media_event",
-    "pao_commentary",
-    "pao_filler",
-}
-
-SYSTEM_PROMPT = """You are an expert NASA mission flight controller and archivist analyzing transcripts from the crewed Artemis II lunar flyby mission.
-
-You will receive a chronological window of utterances from two channels:
-- [COMM]: Authoritative operational audio, including space-to-ground communications between Orion crew and Mission Control Houston (OE-1/OE-2 voice loops) as well as onboard crew Personal Communication Device (PCD) voice recordings made inside the cabin (e.g., lunar flyby observations during farside Loss of Signal and in-cabin test notes, often prefixed with `[Speaker]`).
-- [PAO]: NASA Public Affairs Office broadcast commentary.
-
-Your goal is to assess EVERY target utterance in the window:
-1. Determine whether PAO commentary is actually helpful mission guidance (explaining live maneuvers, callouts, spacecraft systems, or crew activity) versus filler (studio interviews, PR fluff, repetitive recaps, banter).
-2. Categorize and tag both COMM and PAO utterances so users can filter conversations by high-level category or search by specific technical/mission topics.
-3. Discover granular mission milestones directly from the transcripts, whether or not they appear in any reference list. Milestone discovery is independent of category and importance; a routine operational step can still be a useful timeline entry.
-
-MILESTONE EXTRACTION RULES:
-- Capture concrete mission developments: crew walkout, departure for the pad, pad arrival, boarding, hatch closure, readiness approvals, countdown holds/resumes, maneuver start/cutoff/results, separation, deployments, configuration changes, checkouts, science/imaging session starts and completions, specific observations, communications loss/restoration, anomalies/workarounds/resolution, entry and recovery steps.
-- Preserve distinct stages rather than collapsing them into one broad event. One utterance may confirm multiple developments; return each separately.
-- Use COMM and live PAO reports as evidence. Capture an event even when only PAO reports it. A report of a completed event is valid; a future plan, prediction, generic explanation, historical anecdote, or recap that merely repeats an already captured development is not a new milestone. Do not turn countdown numbers, routine acknowledgments, or every checklist readback into events.
-- Extract only developments actually supported by the target utterance, using neighboring utterances to resolve context. Copy a short exact supporting quote into evidence. Do not infer execution from a schedule, photo caption, video title, or a matching reference time.
-- The references are supplementary context, NOT a whitelist. Missing references or missing IDs must NEVER suppress a transcript-supported milestone. Photo filenames and video IDs identify media, not mission events.
-- Use a catalog event_id only when the milestone directly matches a reference explicitly labeled event_id. Otherwise omit event_id; never invent an ID or use new:<slug>. Discovery does not depend on ID assignment.
-- Prefer the clearest execution/confirmation over repetitive commentary about the same development. Preceding context may show milestones already captured; do not repeat those, but capture new stages, results, or changed conditions. Do not skip a target development solely because a preceding utterance mentions it without a captured milestone.
-- Within a batch, put each development on ONE best-supported utterance. For example, "Here they are" followed by "The crew is taking their first steps outside" is one walkout milestone on the second utterance, not two starts. Repeated observations of an ongoing activity are not separate starts.
-- Titles must not add an action, destination, hardware, or outcome that the utterance and context do not establish. Do not reinterpret ambiguous words as a specific operational step. Following context can clarify what the crew is doing, but never extract a milestone solely from a context-only utterance.
-- The utterance timestamp locates the REPORT, not necessarily the event itself. Do not invent a precise event time from an approximate or retrospective report.
-
-For EACH target utterance `[idx]`, output a single JSON object on its own line (JSONL format, no markdown code fences) with these keys:
-  "i": integer index matching `[idx]`
-  "imp": integer 1 to 5 importance/usefulness score:
-     - For PAO:
-       5 = Primary/Critical: Live callouts of burns, milestones, or direct explanation of active crew/ground comm happening right now.
-       4 = Helpful Guidance: Useful mission status update, explaining current/upcoming timeline ops or hardware in context.
-       3 = Contextual: Relevant mission background during quiet comm periods.
-       2 = Repetitive/Low-value: Generic explanations repeated many times.
-       1 = Filler: Studio interviews, guest chatter, PR fluff, talking over crew comm without adding operational value.
-     - For COMM:
-       5 = Highlight: Major burn/milestone callout, vivid lunar/Earth observation, anomaly, or standout crew moment.
-       4 = Substantive: Technical systems, photography setup, science observation, or detailed crew-life discussion.
-       3 = Routine Ops: Standard procedure/checklist readbacks, status checks.
-       2 = Housekeeping: Comm checks, handovers, brief acknowledgments ("Loud and clear").
-       1 = Fragment/Noise: Single-word "Copy", mic clip, unintelligible fragment.
-  "cat": one of ["maneuver", "systems", "photography", "science", "crew_life", "milestone", "media_event", "pao_commentary", "pao_filler"]
-  "tags": array of 1 to 4 short lowercase topic strings (e.g. ["icps separation", "thrusters"], ["nikon camera", "400mm lens", "window view"], ["hygiene", "water dispenser"], ["studio interview"])
-  "topic": concise 4-10 word description of what is being discussed or explained
-  "crew": OPTIONAL array of involved crewmember slugs from ["wiseman", "glover", "koch", "hansen", "all"] when identifiable from the utterance or context
-  "milestones": array (empty when none) of objects with:
-    "title": concise, specific name for this development (e.g. "Crew departs for launch pad")
-    "status": one of ["started", "in_progress", "completed", "confirmed", "observed", "anomaly", "resolved", "cancelled"]
-    "evidence": short exact quote from THIS target utterance supporting the development
-    "event_id": OPTIONAL exact catalog event_id from the references, only if directly matched
-    "crew": OPTIONAL array of involved crewmember slugs from ["wiseman", "glover", "koch", "hansen", "all"]
-
-Examples of milestones (not an exhaustive list):
-- "The crew is walking out now and will soon depart for the pad." -> [{"title":"Crew walkout","status":"started","evidence":"The crew is walking out now"}] (departure is still future).
-- "The crew has arrived at the pad and hatch closure is complete." -> two completed milestones, "Crew arrival at launch pad" and "Hatch closure", with separate supporting quotes, even without catalog IDs.
-- "Tomorrow the crew will perform a cabin depress test." -> [].
-- "We have ignition." -> a started milestone even if no maneuver appears in the references.
-
-Output ONLY valid JSONL lines, one line per target `[idx]` in ascending order."""
 
 # ANSI colors for live terminal streaming
 C_RESET = "\033[0m"
@@ -246,7 +192,7 @@ def build_user_prompt(
                 lines.append(f"[ALREADY CAPTURED] {milestone['title']} ({milestone['status']})")
         lines.append("")
 
-    lines.append(f"=== TARGET UTTERANCES TO ASSESS (output 1 JSONL line for each [0]..[{len(target_batch) - 1}]) ===")
+    lines.append(f"=== TARGET UTTERANCES TO EXTRACT (cover each [0]..[{len(target_batch) - 1}]) ===")
     for idx, u in enumerate(target_batch):
         ch = u["channel"].upper()
         lines.append(f"[{idx}] {u['t']} [{ch}] {u['text']}")
@@ -257,25 +203,44 @@ def build_user_prompt(
         for u in context_after:
             lines.append(f"[CTX] {u['t']} [{u['channel'].upper()}] {u['text']}")
 
+    lines.append("")
+    lines.append("Extract threads, statements and anchored developments for all targets. Return only the extraction JSON object.")
     return "\n".join(lines)
+
+
+def llm_settings(backend: str, model: str | None = None) -> tuple[str, str, str]:
+    """Resolve the API base URL, credentials and model without mixing backends."""
+    if backend == "hgx":
+        return HGX_URL, HGX_API_KEY, model or DEFAULT_MODEL
+    if backend == "strata":
+        return STRATA_URL, STRATA_API_KEY, model or STRATA_MODEL
+    raise ValueError(f"Unknown LLM backend: {backend}")
 
 
 def stream_llm_assessment(
     user_prompt: str,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     reasoning_effort: str | None = None,
     max_tokens: int = 65536,
     temperature: float = 0.2,
     quiet: bool = False,
+    diagnostics: dict | None = None,
+    backend: str = "hgx",
+    hide_reasoning: bool = False,
+    system_prompt: str | None = None,
+    output_format: str = "JSONL",
 ) -> tuple[str, str, dict]:
-    """Stream reasoning and content from HGX_URL and print live to terminal."""
-    if not HGX_URL or not HGX_API_KEY:
+    """Stream reasoning and content from the selected API and print live."""
+    base_url, api_key, model = llm_settings(backend, model)
+    if backend == "hgx" and (not base_url or not api_key):
         raise RuntimeError("HGX_URL and HGX_API_KEY must be set in .env")
+    if not base_url:
+        raise RuntimeError("STRATA_URL must be set in .env (API base URL, including any /v1 prefix)")
 
     payload: dict = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt if system_prompt is not None else SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
         "max_tokens": max_tokens,
@@ -286,14 +251,13 @@ def stream_llm_assessment(
     if reasoning_effort and reasoning_effort != "auto":
         payload["reasoning_effort"] = reasoning_effort
 
+    headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
-        f"{HGX_URL}/chat/completions",
+        f"{base_url.rstrip('/')}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {HGX_API_KEY}",
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-        },
+        headers=headers,
     )
 
     reasoning_parts: list[str] = []
@@ -304,19 +268,35 @@ def stream_llm_assessment(
     reasoning_tokens_est = 0
     content_tokens_est = 0
     usage_info: dict = {}
+    finish_reason = None
+    done_received = False
+    raw_stream = []
+    stream_issues = []
+    if diagnostics is not None:
+        # Shared lists retain the partial response if reading raises or is interrupted.
+        diagnostics.update(raw_stream=raw_stream, stream_issues=stream_issues)
 
     with urllib.request.urlopen(req, timeout=600) as resp:
         for raw_line in resp:
             line = raw_line.decode("utf-8", errors="replace").strip()
+            raw_stream.append(line)
             if not line or not line.startswith("data:"):
                 continue
             data_str = line[5:].strip()
             if data_str == "[DONE]":
+                done_received = True
                 break
             try:
                 chunk = json.loads(data_str)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                stream_issues.append({"reason": "invalid_stream_json", "error": str(exc), "raw": data_str})
                 continue
+
+            if not isinstance(chunk, dict):
+                stream_issues.append({"reason": "invalid_stream_chunk", "raw": data_str})
+                continue
+            if chunk.get("error"):
+                raise RuntimeError(f"LLM stream error: {chunk['error']}")
 
             if chunk.get("usage"):
                 usage_info = chunk["usage"]
@@ -324,6 +304,8 @@ def stream_llm_assessment(
             choices = chunk.get("choices") or []
             if not choices:
                 continue
+            if choices[0].get("finish_reason") is not None:
+                finish_reason = choices[0]["finish_reason"]
             delta = choices[0].get("delta") or {}
 
             r_tok = delta.get("reasoning") or delta.get("reasoning_content") or ""
@@ -334,11 +316,11 @@ def stream_llm_assessment(
                     first_token_t = time.monotonic()
                 if phase != "reasoning":
                     phase = "reasoning"
-                    if not quiet:
+                    if not quiet and not hide_reasoning:
                         sys.stdout.write(f"\n{C_CYAN}{C_BOLD}── [LLM REASONING] ──{C_RESET}\n{C_DIM}")
                 reasoning_parts.append(r_tok)
                 reasoning_tokens_est += 1
-                if not quiet:
+                if not quiet and not hide_reasoning:
                     sys.stdout.write(r_tok)
                     sys.stdout.flush()
 
@@ -346,11 +328,11 @@ def stream_llm_assessment(
                 if first_token_t is None:
                     first_token_t = time.monotonic()
                 if phase != "content":
-                    if phase == "reasoning" and not quiet:
+                    if phase == "reasoning" and not quiet and not hide_reasoning:
                         sys.stdout.write(f"{C_RESET}\n")
                     phase = "content"
                     if not quiet:
-                        sys.stdout.write(f"\n{C_GREEN}{C_BOLD}── [LLM OUTPUT (JSONL)] ──{C_RESET}\n")
+                        sys.stdout.write(f"\n{C_GREEN}{C_BOLD}── [LLM OUTPUT ({output_format})] ──{C_RESET}\n")
                 content_parts.append(c_tok)
                 content_tokens_est += 1
                 if not quiet:
@@ -374,18 +356,26 @@ def stream_llm_assessment(
         "completion_tokens": total_gen,
         "prompt_tokens": usage_info.get("prompt_tokens"),
         "tok_per_s": round(tok_per_s, 1),
+        "finish_reason": finish_reason,
+        "done_received": done_received,
     }
     return "".join(reasoning_parts), "".join(content_parts), stats
 
 
-def normalize_milestones(raw: object, text: str, event_ids: set[str]) -> list[dict] | None:
+def normalize_milestones(
+    raw: object, text: str, event_ids: set[str], diagnostics: list[dict] | None = None,
+) -> list[dict] | None:
     """Validate transcript evidence; discard invalid catalog links, not discoveries."""
     if not isinstance(raw, list):
+        if diagnostics is not None:
+            diagnostics.append({"reason": "milestones_not_array", "value": raw})
         return None
     milestones = []
     seen = set()
-    for item in raw:
+    for index, item in enumerate(raw):
         if not isinstance(item, dict):
+            if diagnostics is not None:
+                diagnostics.append({"reason": "milestone_not_object", "milestone_index": index, "value": item})
             return None
         title = item.get("title")
         status = item.get("status")
@@ -396,11 +386,25 @@ def normalize_milestones(raw: object, text: str, event_ids: set[str]) -> list[di
             or not isinstance(evidence, str) or not evidence.strip()
             or evidence.strip() not in text
         ):
+            if diagnostics is not None:
+                reasons = []
+                if not isinstance(title, str) or not title.strip():
+                    reasons.append("invalid_title")
+                if not isinstance(status, str) or status not in MILESTONE_STATUSES:
+                    reasons.append("invalid_status")
+                if not isinstance(evidence, str) or not evidence.strip():
+                    reasons.append("invalid_evidence")
+                elif evidence.strip() not in text:
+                    reasons.append("evidence_not_in_utterance")
+                diagnostics.append({"reason": "invalid_milestone", "milestone_index": index,
+                                    "errors": reasons, "value": item})
             return None
         milestone = {"title": title.strip(), "status": status, "evidence": evidence.strip()}
         event_id = item.get("event_id")
         if isinstance(event_id, str) and event_id in event_ids:
             milestone["event_id"] = event_id
+        elif event_id and diagnostics is not None:
+            diagnostics.append({"reason": "discarded_event_id", "milestone_index": index, "value": event_id})
         m_crew = normalize_crew_list(item.get("crew"))
         if m_crew:
             milestone["crew"] = m_crew
@@ -413,11 +417,12 @@ def normalize_milestones(raw: object, text: str, event_ids: set[str]) -> list[di
 
 def parse_jsonl_assessments(
     content: str, target_batch: list[dict], event_ids: set[str],
+    diagnostics: list[dict] | None = None,
 ) -> dict[int, dict]:
     """Parse nested JSONL and leave invalid assessments pending for a later run."""
     results: dict[int, dict] = {}
     decoder = json.JSONDecoder()
-    for line in content.splitlines():
+    for line_number, line in enumerate(content.splitlines(), 1):
         line = line.strip().rstrip(",")
         if not line or line.startswith("```"):
             continue
@@ -435,13 +440,20 @@ def parse_jsonl_assessments(
                 except json.JSONDecodeError:
                     pass
         if not isinstance(obj, dict):
+            if diagnostics is not None:
+                diagnostics.append({"reason": "invalid_json_object", "line": line_number, "raw": line})
             continue
 
         idx = obj.get("i", obj.get("id", obj.get("idx")))
         if type(idx) is not int or not (0 <= idx < len(target_batch)):
+            if diagnostics is not None:
+                diagnostics.append({"reason": "invalid_index", "line": line_number, "value": idx, "raw": line})
             continue
 
-        milestones = normalize_milestones(obj.get("milestones"), target_batch[idx]["text"], event_ids)
+        milestone_issues = []
+        milestones = normalize_milestones(obj.get("milestones"), target_batch[idx]["text"], event_ids, milestone_issues)
+        if diagnostics is not None:
+            diagnostics.extend({**issue, "line": line_number, "index": idx} for issue in milestone_issues)
         if milestones is None:
             print(f"  Invalid milestone data for [{idx}]; leaving utterance pending.")
             continue
@@ -454,6 +466,8 @@ def parse_jsonl_assessments(
 
         cat = str(obj.get("cat", obj.get("category", "pao_commentary"))).strip().lower()
         if cat not in CATEGORIES:
+            if diagnostics is not None:
+                diagnostics.append({"reason": "defaulted_category", "line": line_number, "index": idx, "value": cat})
             cat = "pao_commentary"
 
         raw_tags = obj.get("tags", [])
@@ -466,6 +480,8 @@ def parse_jsonl_assessments(
         crew = normalize_crew_list(obj.get("crew")) or infer_crew_members(target_batch[idx]["text"])
         # Preserve the existing CSV column as the first optional catalog link.
         event_id = next((m["event_id"] for m in milestones if m.get("event_id")), "")
+        if idx in results and diagnostics is not None:
+            diagnostics.append({"reason": "duplicate_index", "line": line_number, "index": idx, "raw": line})
         results[idx] = {
             "importance": imp,
             "category": cat,
@@ -476,6 +492,191 @@ def parse_jsonl_assessments(
             "milestones": milestones,
         }
     return results
+
+
+def parse_staged_assessments(
+    content: str, target_batch: list[dict], event_ids: set[str], extraction: dict,
+    diagnostics: list[dict] | None = None,
+) -> dict[int, dict]:
+    """Validate labels and join the extraction's crew and milestones in Python."""
+    issues = diagnostics if diagnostics is not None else []
+    milestones = anchored_milestones(extraction, len(target_batch))
+    crew = involved_crew(extraction, len(target_batch))
+    rows, seen, invalid = {}, set(), set()
+    for line_number, line in enumerate(content.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            issues.append({"reason": "invalid_label_json", "line": line_number, "raw": line})
+            continue
+        idx = row.get("i") if isinstance(row, dict) else None
+        if type(idx) is not int or not 0 <= idx < len(target_batch):
+            issues.append({"reason": "invalid_label_index", "line": line_number, "value": idx})
+            continue
+        if idx in seen:
+            invalid.add(idx)
+            rows.pop(idx, None)
+            issues.append({"reason": "duplicate_label_index", "index": idx, "line": line_number})
+            continue
+        seen.add(idx)
+        tags = row.get("tags")
+        if (type(row.get("imp")) is not int or not 1 <= row["imp"] <= 5
+                or not isinstance(row.get("cat"), str) or row["cat"] not in CATEGORIES
+                or not isinstance(tags, list) or not 1 <= len(tags) <= 4
+                or any(not isinstance(t, str) or not t.strip() for t in tags)
+                or not isinstance(row.get("topic"), str) or not row["topic"].strip()):
+            invalid.add(idx)
+            issues.append({"reason": "invalid_label_fields", "index": idx, "line": line_number})
+            continue
+        if "crew" in row or "milestones" in row:
+            issues.append({"reason": "ignored_label_attribution", "index": idx, "line": line_number})
+        rows[idx] = {key: row[key] for key in ("i", "imp", "cat", "tags", "topic")}
+        if milestones[idx]:
+            # Labeling must not rewrite an extracted observation as a causal claim.
+            rows[idx]["topic"] = milestones[idx][0]["title"]
+        rows[idx].update(crew=crew[idx], milestones=milestones[idx])
+    joined = "\n".join(json.dumps(rows[i], ensure_ascii=False) for i in sorted(rows) if i not in invalid)
+    parsed = parse_jsonl_assessments(joined, target_batch, event_ids, issues)
+    for idx, assessment in parsed.items():
+        # The legacy parser's name inference must not expand validated attribution.
+        assessment["crew"] = crew[idx]
+    return parsed
+
+
+def staged_llm_assessment(
+    user_prompt: str, target_batch: list[dict], event_ids: set[str], *,
+    backend: str = "hgx", model: str | None = None,
+    extraction_reasoning_effort: str = "auto", reasoning_effort: str = "low",
+    max_tokens: int = 65536, temperature: float = 0.2, quiet: bool = False,
+    hide_reasoning: bool = False, diagnostics: dict | None = None,
+    parse_issues: list[dict] | None = None,
+) -> tuple[str, dict[int, dict], dict]:
+    """Extract once, validate, then label without rediscovering developments."""
+    diagnostics = diagnostics if diagnostics is not None else {}
+    parse_issues = parse_issues if parse_issues is not None else []
+    stages = diagnostics.setdefault("stages", {})
+    extraction = None
+    parsed = {}
+    content = ""
+
+    def request_stage(name, prompt, system_prompt, effort):
+        stage = {
+            "system_prompt": system_prompt, "user_prompt": prompt,
+            "system_prompt_sha256": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
+            "user_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "generation_settings": {"reasoning_effort": effort, "max_tokens": max_tokens,
+                                    "temperature": temperature},
+        }
+        stages[name] = stage
+        if not quiet:
+            print(f"\n{C_BOLD}{name}: reasoning_effort={effort}{C_RESET}")
+        _, content, stats = stream_llm_assessment(
+            user_prompt=prompt, backend=backend, model=model, reasoning_effort=effort,
+            max_tokens=max_tokens, temperature=temperature, quiet=quiet,
+            hide_reasoning=hide_reasoning, diagnostics=stage,
+            system_prompt=system_prompt, output_format="JSONL" if name == "labeling" else "JSON",
+        )
+        stage.update(raw_content=content, stats=stats)
+        return stage, content, stats
+
+    def validate_extraction(content, stage):
+        stats = stage["stats"]
+        if (stats.get("finish_reason") not in (None, "stop")
+                or stats.get("done_received") is False or stage.get("stream_issues")):
+            raise ValueError("extraction stream did not finish cleanly")
+        return parse_extraction(content, target_batch, event_ids)
+
+    for name, prompt, system_prompt, effort in (
+        ("extraction", user_prompt, EXTRACTION_SYSTEM_PROMPT, extraction_reasoning_effort),
+        ("labeling", None, SYSTEM_PROMPT, reasoning_effort),
+    ):
+        if name == "labeling":
+            prompt = build_label_prompt(target_batch, extraction)
+        stage, content, stats = request_stage(name, prompt, system_prompt, effort)
+        if name == "extraction":
+            try:
+                extraction = validate_extraction(content, stage)
+            except ValueError as exc:
+                stage["validation_error"] = str(exc)
+                if (stats.get("finish_reason") not in (None, "stop")
+                        or stats.get("done_received") is False or stage.get("stream_issues")):
+                    parse_issues.append({"reason": "invalid_extraction", "error": str(exc)})
+                    raise
+                repair_prompt = user_prompt + "\n\n" + json.dumps({
+                    "task": "Correct the previous extraction using the original source above and the validation error. Return the complete corrected extraction JSON only; preserve supported facts and uncertainty, and remove unsupported developments.",
+                    "validation_error": str(exc), "previous_extraction": content,
+                }, ensure_ascii=False)
+                stage, content, stats = request_stage(
+                    "extraction_repair", repair_prompt, EXTRACTION_SYSTEM_PROMPT, "low")
+                try:
+                    extraction = validate_extraction(content, stage)
+                except ValueError as repair_error:
+                    stage["validation_error"] = str(repair_error)
+                    parse_issues.append({"reason": "invalid_extraction", "error": str(repair_error)})
+                    raise
+                parse_issues.append({"reason": "repaired_extraction", "error": str(exc)})
+            stage["extraction"] = extraction
+        else:
+            parsed = parse_staged_assessments(content, target_batch, event_ids, extraction, parse_issues)
+    stage_stats = [stage["stats"] for stage in stages.values()]
+    elapsed = sum(s["elapsed_s"] for s in stage_stats)
+    completion = sum(s["completion_tokens"] for s in stage_stats)
+    stats = {
+        "elapsed_s": round(elapsed, 2), "ttft_s": stage_stats[0]["ttft_s"],
+        "completion_tokens": completion,
+        "prompt_tokens": (sum(s["prompt_tokens"] for s in stage_stats)
+                          if all(s.get("prompt_tokens") is not None for s in stage_stats) else None),
+        "tok_per_s": round(completion / max(0.001, elapsed), 1),
+        "finish_reason": stage_stats[-1].get("finish_reason"),
+        "done_received": stage_stats[-1].get("done_received"),
+        "stages": {name: stage["stats"] for name, stage in stages.items()},
+    }
+    return content, parsed, stats
+
+
+def write_batch_diagnostics(
+    run_dir: Path, batch_number: int, target_batch: list[dict], user_prompt: str,
+    content: str, stats: dict, parsed: dict[int, dict], issues: list[dict],
+    stream_diagnostics: dict, error: dict | None = None,
+) -> None:
+    """Append batch health metrics; retain full inputs/responses for problem batches."""
+    missing = [{"index": i, "uid": u["uid"], "t": u["t"], "channel": u["channel"]}
+               for i, u in enumerate(target_batch) if i not in parsed]
+    stages = stream_diagnostics.get("stages", {})
+    stage_issues = [issue for stage in stages.values() for issue in stage.get("stream_issues", [])]
+    stream_issues = stream_diagnostics.get("stream_issues", []) + stage_issues
+    summary = {
+        "logged_at": datetime.now(timezone.utc).isoformat(), "batch": batch_number,
+        "first_utc": target_batch[0]["t"], "last_utc": target_batch[-1]["t"],
+        "expected": len(target_batch), "parsed": len(parsed), "missing": missing,
+        "stats": stats, "issue_counts": dict(Counter(
+            issue["reason"] for issue in issues + stream_issues)),
+        "error": error,
+    }
+    if stages:
+        stage_path = run_dir / f"batch_{batch_number:05d}_stages.json"
+        stage_path.write_text(json.dumps({
+            "stages": {name: {key: value for key, value in stage.items() if key != "raw_stream"}
+                       for name, stage in stages.items()},
+        }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        summary["stages_file"] = stage_path.name
+    problem = (missing or issues or stream_issues or error
+               or stats.get("finish_reason") not in (None, "stop")
+               or stats.get("done_received") is False)
+    if problem:
+        detail_path = run_dir / f"batch_{batch_number:05d}.json"
+        detail_path.write_text(json.dumps({
+            **summary, "system_prompt": (list(stages.values())[-1]["system_prompt"] if stages else SYSTEM_PROMPT),
+            "user_prompt": (list(stages.values())[-1]["user_prompt"] if stages else user_prompt),
+            "target_batch": target_batch, "raw_content": content,
+            "parse_issues": issues, "stream": stream_diagnostics,
+        }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        summary["detail_file"] = detail_path.name
+        print(f"  WARNING: Batch {batch_number}: {len(missing)} unassessed; diagnostics: {detail_path}")
+    with (run_dir / "batches.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(summary, ensure_ascii=False) + "\n")
 
 
 def export_detected_milestones(
@@ -497,6 +698,7 @@ def export_detected_milestones(
                     "t": u["t"],
                     "time_basis": "report",
                     "text": u["text"],
+                    "assessment": {key: record[key] for key in PROVENANCE_FIELDS if key in record},
                 }
                 fh.write(json.dumps(event, ensure_ascii=False) + "\n")
                 count += 1
@@ -544,15 +746,34 @@ def main() -> None:
         description="Enrich comm.csv and PAO.csv and discover granular mission milestones"
     )
     parser.add_argument("--mission", default="artemis-ii", choices=list(MISSIONS.keys()))
+    parser.add_argument("--backend", choices=["hgx", "strata"], default="hgx",
+                        help="LLM backend (default: hgx; strata uses STRATA_URL)")
+    parser.add_argument("--model", default=None, help="Override the selected backend's default model")
     parser.add_argument("--batch-size", type=int, default=30, help="Utterances per LLM request (default: 30)")
     parser.add_argument("--context-lines", type=int, default=5, help="Context lines before and after each batch (default: 5)")
     parser.add_argument("--test-batches", type=int, default=None, help="Run only N batches for testing/benchmarking")
     parser.add_argument("--start-utc", type=str, default=None, help="Optional ISO UTC timestamp to start from (e.g. 2026-04-01T22:30:00Z)")
-    parser.add_argument("--reasoning-effort", type=str, default="auto", choices=["auto", "low", "medium", "high"])
+    parser.add_argument("--extraction-reasoning-effort", default="auto", choices=["auto", "low", "medium", "high"],
+                        help="Reasoning for conversation extraction (default: auto)")
+    parser.add_argument("--reasoning-effort", type=str, default="low", choices=["auto", "low", "medium", "high"],
+                        help="Reasoning for utterance labeling (default: low)")
     parser.add_argument("--max-tokens", type=int, default=65536)
     parser.add_argument("--force", action="store_true", help="Re-assess utterances even if already in ledger")
+    parser.add_argument("--reassess-model", nargs="+", default=[], metavar="MODEL",
+                        help="Also reassess cached results from these API model IDs; unknown matches unlabeled records")
     parser.add_argument("--quiet", action="store_true", help="Disable live token-by-token streaming printout")
+    parser.add_argument("--hide-reasoning", action="store_true",
+                        help="Hide reasoning in the terminal while keeping live JSONL output and summaries")
     args = parser.parse_args()
+    if args.batch_size < 1 or args.context_lines < 0 or (args.test_batches is not None and args.test_batches < 1):
+        parser.error("batch-size and test-batches must be positive; context-lines must be nonnegative")
+    endpoint, _api_key, model = llm_settings(args.backend, args.model)
+    system_prompt_sha256 = hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest()
+    generation_settings = {
+        "reasoning_effort": args.reasoning_effort, "max_tokens": args.max_tokens,
+        "temperature": 0.2,
+    }
+    extraction_generation_settings = {**generation_settings, "reasoning_effort": args.extraction_reasoning_effort}
 
     # Enable UTF-8 output and ANSI escape sequences on Windows terminal
     if hasattr(sys.stdout, "reconfigure"):
@@ -572,8 +793,10 @@ def main() -> None:
     export_detected_milestones(milestones_path, utterances, existing)
 
     print(f"\n{C_BOLD}=== Step 1d: Enrich Comm + PAO Transcripts — {mission.name} ==={C_RESET}")
-    print(f"  Endpoint        : {HGX_URL}")
-    print(f"  Model           : {DEFAULT_MODEL} (reasoning_effort={args.reasoning_effort})")
+    print(f"  Backend         : {args.backend}")
+    print(f"  Endpoint        : {endpoint}")
+    print(f"  Model           : {model}")
+    print(f"  Stages          : extraction ({args.extraction_reasoning_effort}) -> labeling ({args.reasoning_effort})")
     print(f"  Total utterances: {len(utterances):,} (comm + PAO merged chronologically)")
     print(f"  Reference index : {len(ctx_index.events):,} timeline/science/LTP/video events + {len(ctx_index.crew_photo_ts):,} crew photos")
     print(f"  Already in cache: {len(existing):,} ({ledger_path.name})")
@@ -593,7 +816,9 @@ def main() -> None:
     # Build batches of unassessed utterances while preserving preceding context
     pending_indices = [
         i for i in range(start_idx, len(utterances))
-        if args.force or existing.get(utterances[i]["uid"], {}).get("assessment_version") != ASSESSMENT_VERSION
+        if (args.force
+            or existing.get(utterances[i]["uid"], {}).get("assessment_version") != ASSESSMENT_VERSION
+            or (existing.get(utterances[i]["uid"], {}).get("model") or "unknown") in args.reassess_model)
     ]
 
     if not pending_indices:
@@ -602,14 +827,34 @@ def main() -> None:
         return
 
     batches: list[list[int]] = []
-    for b_start in range(0, len(pending_indices), args.batch_size):
-        batches.append(pending_indices[b_start : b_start + args.batch_size])
-        if args.test_batches and len(batches) >= args.test_batches:
-            break
+    for source_index in pending_indices:
+        if (not batches or len(batches[-1]) >= args.batch_size
+                or source_index != batches[-1][-1] + 1):
+            if args.test_batches and len(batches) >= args.test_batches:
+                break
+            batches.append([])
+        batches[-1].append(source_index)
 
     print(f"  Batches to run  : {len(batches)} (batch_size={args.batch_size})\n")
 
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:8]
+    diagnostics_dir = mission.processed_transcripts / "enrichment_diagnostics" / run_id
+    diagnostics_dir.mkdir(parents=True)
+    (diagnostics_dir / "run.json").write_text(json.dumps({
+        "backend": args.backend, "endpoint": endpoint, "model": model,
+        "run_id": run_id, "prompt_version": PROMPT_VERSION,
+        "system_prompt_sha256": system_prompt_sha256,
+        "generation_settings": generation_settings,
+        "extraction_generation_settings": extraction_generation_settings,
+        "extraction_system_prompt": EXTRACTION_SYSTEM_PROMPT,
+        "extraction_system_prompt_sha256": hashlib.sha256(EXTRACTION_SYSTEM_PROMPT.encode("utf-8")).hexdigest(),
+        "assessment_version": ASSESSMENT_VERSION,
+        "arguments": vars(args), "pending_at_start": len(pending_indices),
+        "batches": len(batches), "system_prompt": SYSTEM_PROMPT,
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"  Diagnostics     : {diagnostics_dir}\n")
     batch_stats: list[dict] = []
+    failed = False
 
     with open(ledger_path, "a", encoding="utf-8") as ledger_fh:
         for b_num, idx_list in enumerate(batches, 1):
@@ -642,23 +887,50 @@ def main() -> None:
                 badge = f"{C_CYAN}[COMM]{C_RESET}" if u["channel"] == "comm" else f"{C_YELLOW}[PAO ]{C_RESET}"
                 print(f"  [{local_i:2d}] {u['t'][11:19]} {badge} {u['text']}")
 
+            stream_diagnostics: dict = {}
+            parse_issues: list[dict] = []
+            event_ids = ctx_index.query_event_ids(w_start_ts, w_end_ts)
+            request_started = time.monotonic()
             try:
-                _reasoning, content, stats = stream_llm_assessment(
+                content, parsed, stats = staged_llm_assessment(
                     user_prompt=user_prompt,
+                    target_batch=target_batch,
+                    event_ids=event_ids,
+                    backend=args.backend,
+                    model=model,
+                    extraction_reasoning_effort=args.extraction_reasoning_effort,
                     reasoning_effort=args.reasoning_effort,
                     max_tokens=args.max_tokens,
+                    temperature=generation_settings["temperature"],
                     quiet=args.quiet,
+                    hide_reasoning=args.hide_reasoning,
+                    diagnostics=stream_diagnostics,
+                    parse_issues=parse_issues,
                 )
-            except urllib.error.HTTPError as err:
-                body = err.read().decode("utf-8", errors="replace")
-                print(f"\n  ERROR HTTP {err.code}: {body}")
-                break
-            except Exception as exc:
-                print(f"\n  ERROR calling LLM: {exc}")
+            except (Exception, KeyboardInterrupt) as exc:
+                error = {"type": type(exc).__name__, "message": str(exc),
+                         "traceback": traceback.format_exc()}
+                if isinstance(exc, urllib.error.HTTPError):
+                    error.update(http_status=exc.code, body=exc.read().decode("utf-8", errors="replace"))
+                write_batch_diagnostics(
+                    diagnostics_dir, b_num, target_batch, user_prompt, "",
+                    {"elapsed_s": round(time.monotonic() - request_started, 2)}, {}, parse_issues,
+                    stream_diagnostics, error,
+                )
+                if isinstance(exc, KeyboardInterrupt):
+                    raise
+                print(f"\n  ERROR assessing batch: {exc}")
+                failed = True
                 break
 
-            event_ids = ctx_index.query_event_ids(w_start_ts, w_end_ts)
-            parsed = parse_jsonl_assessments(content, target_batch, event_ids)
+            assessed_at = datetime.now(timezone.utc).isoformat()
+            stage_provenance = {
+                name: {key: stage[key] for key in (
+                    "system_prompt_sha256", "user_prompt_sha256", "generation_settings")}
+                for name, stage in stream_diagnostics["stages"].items()
+            }
+            label_prompt = stream_diagnostics["stages"]["labeling"]["user_prompt"]
+            user_prompt_sha256 = stage_provenance["labeling"]["user_prompt_sha256"]
             saved_in_batch = 0
             milestones_in_batch = 0
             for local_i, u in enumerate(target_batch):
@@ -680,6 +952,17 @@ def main() -> None:
                     "event_id": assessment.get("event_id", ""),
                     "milestones": assessment["milestones"],
                     "assessment_version": ASSESSMENT_VERSION,
+                    "backend": args.backend,
+                    "model": model,
+                    "model_provenance": "request",
+                    "run_id": run_id,
+                    "batch": b_num,
+                    "assessed_at": assessed_at,
+                    "prompt_version": PROMPT_VERSION,
+                    "system_prompt_sha256": system_prompt_sha256,
+                    "user_prompt_sha256": user_prompt_sha256,
+                    "generation_settings": generation_settings,
+                    "stage_provenance": stage_provenance,
                     "text": u["text"],
                 }
                 ledger_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -693,6 +976,22 @@ def main() -> None:
             stats["expected"] = len(target_batch)
             stats["milestones"] = milestones_in_batch
             batch_stats.append(stats)
+            write_batch_diagnostics(
+                diagnostics_dir, b_num, target_batch, label_prompt, content, stats,
+                parsed, parse_issues, stream_diagnostics,
+            )
+            stream_problem = any(
+                stage.get("stream_issues")
+                or stage["stats"].get("finish_reason") not in (None, "stop")
+                or stage["stats"].get("done_received") is False
+                for stage in stream_diagnostics["stages"].values()
+            )
+            invalid_labels = any(issue["reason"] not in {"ignored_label_attribution", "repaired_extraction"}
+                                 for issue in parse_issues)
+            if saved_in_batch != len(target_batch) or stream_problem or invalid_labels:
+                print("  Batch validation failed; stopping before downstream steps. Valid rows saved; missing targets remain pending.")
+                failed = True
+                break
 
             print(
                 f"\n{C_BOLD}Batch {b_num} Summary:{C_RESET} "
@@ -715,6 +1014,8 @@ def main() -> None:
 
     if not args.test_batches:
         export_enriched_csvs(mission, utterances, existing)
+    if failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

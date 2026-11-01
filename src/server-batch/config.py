@@ -19,6 +19,9 @@ IO_KEY = os.environ.get("IO_KEY", "")
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 HGX_URL = os.environ.get("HGX_URL", "").rstrip("/")
 HGX_API_KEY = os.environ.get("HGX_API_KEY", "")
+STRATA_URL = os.environ.get("STRATA_URL", "").rstrip("/")
+STRATA_API_KEY = os.environ.get("STRATA_API_KEY", "")
+STRATA_MODEL = os.environ.get("STRATA_MODEL", "iq3_s")
 
 # ── Directories ───────────────────────────────────────────────────────────────
 DATA_DIR = Path(os.environ.get("DATA_DIR", REPO_ROOT.parent / "ArtemisInRealTime_assets"))

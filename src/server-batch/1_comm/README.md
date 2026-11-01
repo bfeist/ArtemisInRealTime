@@ -188,6 +188,27 @@ each utterance, and extracts granular mission developments from the transcript.
 Nearby itinerary, flight-plan, science, photo, and video references provide
 context; they do not define which milestones may be discovered.
 
+Each batch uses two separate LLM requests:
+
+1. **Extraction** reconstructs interleaved threads and statements, distinguishes
+   reports from hypotheses/plans, and groups developments with their source
+   indices, one evidence anchor, and supported crew involvement. Python validates
+   target coverage, references, statuses and exact evidence before labeling.
+2. **Labeling** receives the original targets and the validated extraction and
+   returns only importance, category, tags and topic for each target. Python
+   supplies crew and milestones from extraction; labeling cannot add, remove,
+   move or duplicate those milestones. An anchored target's primary topic uses
+   its first development title, preserving the extracted observation/uncertainty
+   instead of letting labeling rewrite it as a causal claim.
+
+Category describes the subject, importance measures the information contributed
+in context, and milestone discovery tracks supported developments independently.
+Meaningful continuations retain their context; adjacent troubleshooting threads
+are not assumed to share a cause. Reports preserve diagnostic uncertainty and
+distinguish involved crew from identified speakers. Newly reported past events
+remain eligible, with timestamps locating the report rather than execution.
+Milestones use the clearest target evidence, with earliest-target tie breaking.
+
 Capture concrete steps such as crew walkout, departure, pad arrival, boarding,
 hatch closure, readiness approvals, burn ignition/cutoff, configuration changes,
 science session starts/completions, and anomaly resolution. Distinct stages and
@@ -225,6 +246,8 @@ Preceding context includes already captured milestones to reduce repeated
 reports at batch boundaries. Following context helps interpret ambiguous
 activity without extracting events from context-only lines. `--context-lines`
 sets the number of utterances on each side (default 5).
+Pending targets separated by cached rows form separate batches so intervening
+conversation is available as neighboring context when resuming or replacing a model.
 Occurrence IDs identify source evidence, not a
 globally reconciled event; distant recaps can still require editorial merging.
 
@@ -233,10 +256,109 @@ python 1_comm/1d_enrich_transcripts.py --mission artemis-ii
 python 1_comm/1d_enrich_transcripts.py --mission artemis-ii --test-batches 1
 ```
 
-Requires `HGX_URL` and `HGX_API_KEY`. `--test-batches` still saves assessments
+HGX is the default backend, using `HGX_URL`, `HGX_API_KEY`, and model
+`LLM-Alpha-512K` (GLM-5.3-Flash). To use the local Strata instance on the 4090,
+set `STRATA_URL` in the repo-root `.env` to its OpenAI-compatible API base URL,
+including the port and any `/v1` prefix. The script appends `/chat/completions`.
+For this local instance, use `STRATA_URL=http://127.0.0.1:47831/v1`.
+`STRATA_MODEL` defaults to `iq3_s`, the API ID for Qwen3.8-Flash-Next IQ3_S;
+use the ID returned by `/v1/models` if you load a different variant.
+`STRATA_API_KEY` is optional.
+Strata does not require HGX credentials. `--model` overrides the selected
+backend's default model for one run.
+
+```bash
+# Benchmark one local batch (still saves results)
+python 1_comm/1d_enrich_transcripts.py --mission artemis-ii --backend strata --test-batches 1
+# Run enrichment locally, then build the hierarchy
+python run_all.py --mission artemis-ii --step 1d 1e --backend strata
+```
+
+Add `--hide-reasoning` to either command to hide reasoning tokens while keeping
+live JSONL assessments and batch summaries visible. `--quiet` on 1d hides both
+reasoning and JSONL token streaming. These flags change terminal display only;
+the model still generates reasoning. Hiding it reduces terminal writes, not
+the model's reasoning workload. Extraction defaults to `auto` reasoning and
+labeling to `low`. Both direct 1d and the runner accept
+`--extraction-reasoning-effort` and `--reasoning-effort` to override the respective
+stages (`auto`, `low`, `medium`, `high`). `--max-tokens` on direct 1d sets the
+output limit for each request. Batch summaries combine timing and tokens from
+both stages; per-stage metrics are retained in diagnostics.
+
+Step 1e makes no LLM requests: it builds the hierarchy from 1d's saved results
+from either backend. Changing backend or model resumes the existing ledger;
+use `--force` on 1d to reassess cached utterances for a model comparison.
+The pipeline runner also accepts `--force` and forwards it only to step 1d:
+
+```bash
+python run_all.py --mission artemis-ii --step 1d 1e --force
+```
+
+Each new ledger assessment records the API `model` ID and `backend`, plus:
+
+- `assessed_at` (UTC), `run_id`, and `batch` to identify the pass.
+- `prompt_version` (independent of the assessment schema), `system_prompt_sha256`
+  and `user_prompt_sha256` to distinguish revised instructions and batch inputs.
+- `generation_settings`: reasoning effort, temperature and output token limit.
+- `stage_provenance`: separate extraction/labeling prompt hashes and generation
+  settings. The existing top-level prompt hashes/settings describe labeling.
+- `model_provenance=request` for model attribution from the request settings.
+
+`run_id` links to the diagnostics directory with the system prompt and run
+arguments. Increment `PROMPT_VERSION` when changing prompt-building rules;
+the system prompt hash also changes automatically when its text changes.
+Milestone records carry this metadata in `assessment`, and step 1e preserves it
+on each merged milestone's source report. Enriched web CSV columns stay the same.
+
+To replace results from a particular model with the selected backend/model:
+
+```bash
+python run_all.py --mission artemis-ii --step 1d 1e --backend hgx --reassess-model iq3_s
+```
+
+`--reassess-model` accepts one or more exact API model IDs; `unknown` selects
+older records with no model attribution. Normal pending/schema-outdated rows
+are still processed. Other current cached models are retained. For a prompt
+revision using the same model, run 1d with `--force` and any desired range/batch
+limits. Changes to model or prompt do not automatically invalidate the cache.
+The ledger retains previous assessments; the latest valid record per utterance
+is used for exports. Legacy records may have only backend/model metadata, with
+`model_provenance=user_confirmed_legacy` and a `provenance_recorded_at` timestamp.
+That timestamp records the attribution, not when the original LLM ran; original
+prompt settings and assessment times remain unknown.
+
+`--test-batches` still saves assessments
 and the derived milestone stream, but skips the final web CSV export.
 `--force` reassesses the selected range while retaining cached assessments
 outside it. Older ledger entries remain available on disk for audit.
+
+Each run also writes `processed/transcripts/enrichment_diagnostics/{run_id}/`:
+
+- `run.json` records the model, arguments, schema version and both system prompts.
+- `batches.jsonl` records each batch's timing, token usage, stream finish reason,
+  accepted count, and missing utterance indices, IDs, timestamps and channels.
+- `batch_00001_stages.json` (and subsequent batch numbers) is always written,
+  including successful batches. It preserves stage prompts, raw structured
+  outputs, validated extraction, hashes, settings and metrics for inspection.
+- `batch_00001.json` (and subsequent batch numbers) is written for problem
+  batches: missing assessments, malformed JSON/indices, rejected milestone
+  evidence, discarded catalog IDs, duplicate indices, abnormal stream endings,
+  request failures or Ctrl+C. It includes the exact prompts, target utterances,
+  raw model content and received stream lines, validation reasons, and any
+  exception traceback or HTTP error body. Partial stream lines are retained
+  when a request fails or is interrupted. Request authorization headers are
+  not logged.
+
+The terminal prints the diagnostics directory and a warning linking each
+problem batch. Rejected or omitted utterances remain pending for the next run;
+diagnostics do not change the assessment schema or invalidate saved results.
+Extraction validation can request one correction at low reasoning using the
+original source, previous JSON and validation error. Both attempts are retained
+with separate hashes/settings/stats. Unclean extraction streams fail directly;
+an invalid correction stops before labeling or ledger writes. Incomplete/invalid
+labels or unhealthy streams preserve valid rows but exit with failure, so the
+runner stops before step 1e. Resume processes pending targets; use `--force`
+to deliberately replace already valid cached assessments.
 
 ## How to Run
 

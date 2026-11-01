@@ -100,7 +100,15 @@ STEPS = [
 ]
 
 
-def run_step(step_id: str, module_path: str, description: str, mission_slug: str) -> bool:
+def run_step(
+    step_id: str, module_path: str, description: str, mission_slug: str,
+    backend: str = "hgx", model: str | None = None,
+    reassess_models: list[str] | None = None,
+    hide_reasoning: bool = False,
+    force: bool = False,
+    extraction_reasoning_effort: str | None = None,
+    reasoning_effort: str | None = None,
+) -> bool:
     """Import and run a single step's main() function."""
     print(f"\n{'='*60}")
     print(f"  Step {step_id}: {description}")
@@ -109,6 +117,20 @@ def run_step(step_id: str, module_path: str, description: str, mission_slug: str
     try:
         # Simulate --mission argument for the step
         sys.argv = ["run_all.py", "--mission", mission_slug]
+        if step_id == "1d":
+            sys.argv.extend(["--backend", backend])
+            if model:
+                sys.argv.extend(["--model", model])
+            if reassess_models:
+                sys.argv.extend(["--reassess-model", *reassess_models])
+            if hide_reasoning:
+                sys.argv.append("--hide-reasoning")
+            if force:
+                sys.argv.append("--force")
+            if extraction_reasoning_effort:
+                sys.argv.extend(["--extraction-reasoning-effort", extraction_reasoning_effort])
+            if reasoning_effort:
+                sys.argv.extend(["--reasoning-effort", reasoning_effort])
         module = importlib.import_module(module_path)
         # Reload in case it was already imported
         importlib.reload(module)
@@ -148,6 +170,19 @@ def main():
         dest="list_steps",
         help="List available steps and exit",
     )
+    parser.add_argument("--backend", choices=["hgx", "strata"], default="hgx",
+                        help="LLM backend for step 1d (default: hgx)")
+    parser.add_argument("--model", default=None, help="Override the step 1d LLM model")
+    parser.add_argument("--reassess-model", nargs="+", default=[], metavar="MODEL",
+                        help="Also reassess step 1d results previously made by these model IDs")
+    parser.add_argument("--hide-reasoning", action="store_true",
+                        help="Hide step 1d reasoning while keeping live assessment output")
+    parser.add_argument("--force", action="store_true",
+                        help="Reassess cached step 1d transcripts; applies only to step 1d")
+    parser.add_argument("--extraction-reasoning-effort", choices=["auto", "low", "medium", "high"],
+                        help="Step 1d conversation extraction reasoning (default: auto)")
+    parser.add_argument("--reasoning-effort", choices=["auto", "low", "medium", "high"],
+                        help="Step 1d utterance labeling reasoning (default: low)")
     args = parser.parse_args()
 
     mission = MISSIONS[args.mission]
@@ -204,7 +239,10 @@ def main():
     start = time.time()
 
     for step_id, module_path, description, _ in steps_to_run:
-        ok = run_step(step_id, module_path, description, args.mission)
+        ok = run_step(step_id, module_path, description, args.mission,
+                      args.backend, args.model, args.reassess_model, args.hide_reasoning,
+                      force=args.force, extraction_reasoning_effort=args.extraction_reasoning_effort,
+                      reasoning_effort=args.reasoning_effort)
         results.append((step_id, ok))
         if not ok:
             if step_id.startswith("7"):

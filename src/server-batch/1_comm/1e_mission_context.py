@@ -132,6 +132,8 @@ def merge_milestone_reports(
             "title": title,
             "evidence": item.get("evidence", ""),
         }
+        if item.get("assessment"):
+            report_entry["assessment"] = item["assessment"]
 
         if match_group is not None:
             match_group["last_ts"] = max(match_group["last_ts"], ts)
