@@ -8,14 +8,14 @@ HGX_URL, or qwen3.8-flash-next via a local Strata instance (--backend strata).
 Live-streams both the model's reasoning tokens and structured JSONL output to the
 terminal as it runs, and persists every assessed utterance immediately to an
 append-only, crash-resumable JSONL ledger:
-  {data_dir}/{mission}/processed/transcripts/enriched_utterances.jsonl
+  {data_dir}/{mission}/processed/transcripts/1d_enrichment/enriched_utterances.jsonl
 
 Derived milestone stream (one record per development, with source evidence):
-  {data_dir}/{mission}/processed/transcripts/detected_milestones.jsonl
+  {data_dir}/{mission}/processed/transcripts/1d_enrichment/detected_milestones.jsonl
 
 Also writes enriched processing outputs:
-  {data_dir}/{mission}/processed/transcripts/comm_enriched.csv
-  {data_dir}/{mission}/processed/transcripts/PAO_enriched.csv
+  {data_dir}/{mission}/processed/transcripts/1d_enrichment/comm_enriched.csv
+  {data_dir}/{mission}/processed/transcripts/1d_enrichment/PAO_enriched.csv
 """
 
 from __future__ import annotations
@@ -726,8 +726,8 @@ def export_detected_milestones(
 
 def export_enriched_csvs(mission: MissionConfig, utterances: list[dict], ledger: dict[str, dict]) -> None:
     """Write processing CSVs; publication into web/ is a separate operation."""
-    comm_out = mission.processed_transcripts / "comm_enriched.csv"
-    pao_out = mission.processed_transcripts / "PAO_enriched.csv"
+    comm_out = mission.transcript_enrichment / "comm_enriched.csv"
+    pao_out = mission.transcript_enrichment / "PAO_enriched.csv"
 
     comm_count = 0
     pao_count = 0
@@ -803,8 +803,8 @@ def main() -> None:
     utterances = load_all_utterances(mission)
     ctx_index = MissionContextIndex(mission)
 
-    ledger_path = mission.processed_transcripts / "enriched_utterances.jsonl"
-    milestones_path = mission.processed_transcripts / "detected_milestones.jsonl"
+    ledger_path = mission.transcript_enrichment / "enriched_utterances.jsonl"
+    milestones_path = mission.transcript_enrichment / "detected_milestones.jsonl"
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     existing = load_existing_ledger(ledger_path)
     # Recover the derived stream after a crash and remove superseded detections.
@@ -857,7 +857,7 @@ def main() -> None:
     print(f"  Batches to run  : {len(batches)} (batch_size={args.batch_size})\n")
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:8]
-    diagnostics_dir = mission.processed_transcripts / "enrichment_diagnostics" / run_id
+    diagnostics_dir = mission.transcript_enrichment / "diagnostics" / run_id
     diagnostics_dir.mkdir(parents=True)
     (diagnostics_dir / "run.json").write_text(json.dumps({
         "backend": args.backend, "endpoint": endpoint, "model": model,

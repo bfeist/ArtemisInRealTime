@@ -32,16 +32,16 @@ def milestone(title="Crew walkout", evidence="The crew is walking out now.", **e
 class TranscriptEnrichmentTest(unittest.TestCase):
     def prepare_investigated_inputs(self):
         """Fixture the post-review contract; raw 1d output must not bypass 1e/1f."""
-        records = list(enrich.load_existing_ledger(self.mission.processed_transcripts / "enriched_utterances.jsonl").values())
+        records = list(enrich.load_existing_ledger(self.mission.transcript_enrichment / "enriched_utterances.jsonl").values())
         for row in records:
             row["label_review"] = {"status": "reviewed"}
         milestones = self.read_milestones()
         for item in milestones:
             item["verification"] = "supported"
-        recovery = self.mission.processed_transcripts / "recovery"
+        recovery = self.mission.transcript_recovery
         history_common.publish(recovery, records, milestones, {"complete": True, "snapshot": "fixture"})
         manifest = history_common.require_artifacts(recovery)
-        history_common.publish(self.mission.processed_transcripts / "investigated_history", records, milestones,
+        history_common.publish(self.mission.transcript_investigation, records, milestones,
             {"complete": True, "snapshot": "fixture", "recovery_snapshot": "fixture",
              "recovery_artifacts": manifest["artifacts"], "unresolved_events": 0, "unresolved_labels": 0})
 
@@ -262,7 +262,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         (self.mission.web_dir / "PAO.csv").write_text("".join(
             f"2026-04-01T18:0{i}:00Z|{self.text}\n" for i in range(3)))
         self.run_cli([assessment(i, [milestone()]) for i in range(3)])
-        ledger_path = self.mission.processed_transcripts / "enriched_utterances.jsonl"
+        ledger_path = self.mission.transcript_enrichment / "enriched_utterances.jsonl"
         records = list(enrich.load_existing_ledger(ledger_path).values())
         with ledger_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps({**records[1], "assessment_version": 0}) + "\n")
@@ -361,7 +361,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         return stream
 
     def read_milestones(self):
-        path = self.mission.processed_transcripts / "detected_milestones.jsonl"
+        path = self.mission.transcript_enrichment / "detected_milestones.jsonl"
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
     def test_cli_invalid_extraction_gets_one_correction_then_stops_without_labeling(self):
@@ -371,7 +371,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         stream = self.run_cli(rows, "--test-batches", "1", expected_exit=1)
         self.assertEqual(stream.call_count, 2)
         self.assertTrue(all(call.kwargs["output_format"] == "JSON" for call in stream.call_args_list))
-        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+        run_dir, = (self.mission.transcript_enrichment / "diagnostics").iterdir()
         summary = json.loads((run_dir / "batches.jsonl").read_text(encoding="utf-8"))
         detail = json.loads((run_dir / summary["detail_file"]).read_text(encoding="utf-8"))
         self.assertEqual(summary["parsed"], 0)
@@ -387,7 +387,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         self.assertIn("Invented quote", stages["extraction_repair"]["raw_content"])
         # Rejected and omitted utterances stay pending for resume.
         self.assertEqual(enrich.load_existing_ledger(
-            self.mission.processed_transcripts / "enriched_utterances.jsonl"), {})
+            self.mission.transcript_enrichment / "enriched_utterances.jsonl"), {})
 
     def test_cli_successful_extraction_correction_records_all_three_requests(self):
         (self.mission.web_dir / "PAO.csv").write_text(f"2026-04-01T18:00:00Z|{self.text}\n")
@@ -399,7 +399,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         self.assertEqual([call.kwargs["output_format"] for call in stream.call_args_list],
                          ["JSON", "JSON", "JSONL"])
         self.assertEqual(stream.call_args_list[1].kwargs["reasoning_effort"], "low")
-        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+        run_dir, = (self.mission.transcript_enrichment / "diagnostics").iterdir()
         summary = json.loads((run_dir / "batches.jsonl").read_text(encoding="utf-8"))
         self.assertEqual(summary["stats"]["completion_tokens"], 300)
         self.assertEqual(summary["stats"]["prompt_tokens"], 150)
@@ -416,7 +416,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         self.assertEqual(stages["extraction_repair"]["extraction"], repaired)
         self.assertEqual(json.loads(stages["labeling"]["user_prompt"])["extraction"], repaired)
         record, = enrich.load_existing_ledger(
-            self.mission.processed_transcripts / "enriched_utterances.jsonl").values()
+            self.mission.transcript_enrichment / "enriched_utterances.jsonl").values()
         self.assertEqual(len(record["milestones"]), 1)
         self.assertEqual(set(record["stage_provenance"]), set(stages))
         for stage_name, call in zip(("extraction", "extraction_repair", "labeling"), stream.call_args_list):
@@ -432,8 +432,8 @@ class TranscriptEnrichmentTest(unittest.TestCase):
                               extraction_stats={"finish_reason": "length"}, expected_exit=1)
         stream.assert_called_once()
         self.assertEqual(enrich.load_existing_ledger(
-            self.mission.processed_transcripts / "enriched_utterances.jsonl"), {})
-        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+            self.mission.transcript_enrichment / "enriched_utterances.jsonl"), {})
+        run_dir, = (self.mission.transcript_enrichment / "diagnostics").iterdir()
         summary = json.loads((run_dir / "batches.jsonl").read_text(encoding="utf-8"))
         stages = json.loads((run_dir / summary["stages_file"]).read_text(encoding="utf-8"))["stages"]
         self.assertEqual(set(stages), {"extraction"})
@@ -455,7 +455,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
                         with self.assertRaises(SystemExit) as raised:
                             enrich.main()
                         self.assertEqual(raised.exception.code, 1)
-        logs = list((self.mission.processed_transcripts / "enrichment_diagnostics").glob(
+        logs = list((self.mission.transcript_enrichment / "diagnostics").glob(
             "*/batch_[0-9][0-9][0-9][0-9][0-9].json"))
         self.assertEqual(len(logs), 3)
         errors = [json.loads(p.read_text(encoding="utf-8"))["error"] for p in logs]
@@ -467,7 +467,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
     def test_complete_batch_has_summary_without_problem_file(self):
         (self.mission.web_dir / "PAO.csv").write_text(f"2026-04-01T18:00:00Z|{self.text}\n")
         self.run_cli([assessment(0, [milestone()])], "--test-batches", "1")
-        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+        run_dir, = (self.mission.transcript_enrichment / "diagnostics").iterdir()
         summary = json.loads((run_dir / "batches.jsonl").read_text(encoding="utf-8"))
         self.assertEqual(summary["parsed"], 1)
         self.assertEqual(summary["missing"], [])
@@ -483,10 +483,10 @@ class TranscriptEnrichmentTest(unittest.TestCase):
             f"2026-04-01T18:00:00Z|{self.text}\n2026-04-01T18:01:00Z|Hatch closed.\n")
         stream = self.run_cli([assessment(0, [milestone()])], "--test-batches", "1", expected_exit=1)
         self.assertEqual(stream.call_count, 2)
-        ledger = enrich.load_existing_ledger(self.mission.processed_transcripts / "enriched_utterances.jsonl")
+        ledger = enrich.load_existing_ledger(self.mission.transcript_enrichment / "enriched_utterances.jsonl")
         self.assertEqual(len(ledger), 1)
         self.assertEqual(next(iter(ledger.values()))["text"], self.text)
-        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+        run_dir, = (self.mission.transcript_enrichment / "diagnostics").iterdir()
         summary = json.loads((run_dir / "batches.jsonl").read_text(encoding="utf-8"))
         self.assertEqual(summary["parsed"], 1)
         self.assertEqual([item["index"] for item in summary["missing"]], [1])
@@ -501,8 +501,8 @@ class TranscriptEnrichmentTest(unittest.TestCase):
                               label_error=RuntimeError("labeling connection lost"), expected_exit=1)
         self.assertEqual(stream.call_count, 2)
         self.assertEqual(enrich.load_existing_ledger(
-            self.mission.processed_transcripts / "enriched_utterances.jsonl"), {})
-        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+            self.mission.transcript_enrichment / "enriched_utterances.jsonl"), {})
+        run_dir, = (self.mission.transcript_enrichment / "diagnostics").iterdir()
         summary = json.loads((run_dir / "batches.jsonl").read_text(encoding="utf-8"))
         self.assertEqual(summary["error"]["type"], "RuntimeError")
         self.assertEqual(summary["parsed"], 0)
@@ -540,16 +540,16 @@ class TranscriptEnrichmentTest(unittest.TestCase):
                 enrich.main()
         self.assertEqual(raised.exception.code, 1)
         self.assertEqual(stream.call_count, len(replies))
-        ledger_path = self.mission.processed_transcripts / "enriched_utterances.jsonl"
+        ledger_path = self.mission.transcript_enrichment / "enriched_utterances.jsonl"
         ledger = enrich.load_existing_ledger(ledger_path)
         expected = utterances[2:] if request_failure else [utterances[0], *utterances[2:]]
         self.assertEqual(set(ledger), {u["uid"] for u in expected})
-        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+        run_dir, = (self.mission.transcript_enrichment / "diagnostics").iterdir()
         summaries = [json.loads(line) for line in (run_dir / "batches.jsonl").read_text().splitlines()]
         self.assertEqual(len(summaries), 2)
         self.assertTrue(summaries[0]["missing"])
         self.assertEqual(summaries[1]["missing"], [])
-        self.assertEqual(len((self.mission.processed_transcripts / "PAO_enriched.csv").read_text().splitlines()), len(expected))
+        self.assertEqual(len((self.mission.transcript_enrichment / "PAO_enriched.csv").read_text().splitlines()), len(expected))
 
         pending_rows = rows if request_failure else [assessment(0, [])]
         self.assertEqual(self.run_cli(pending_rows).call_count, 2)
@@ -566,14 +566,14 @@ class TranscriptEnrichmentTest(unittest.TestCase):
 
     def test_cli_complete_labels_with_unclean_stream_keep_rows_but_fail(self):
         (self.mission.web_dir / "PAO.csv").write_text(f"2026-04-01T18:00:00Z|{self.text}\n")
-        diagnostics_root = self.mission.processed_transcripts / "enrichment_diagnostics"
+        diagnostics_root = self.mission.transcript_enrichment / "diagnostics"
         for stream_end in ({"finish_reason": "length"}, {"done_received": False}):
             with self.subTest(stream_end=stream_end):
                 prior_runs = set(diagnostics_root.glob("*"))
                 self.run_cli([assessment(0, [milestone()])], "--test-batches", "1", "--force",
                              label_stats=stream_end, expected_exit=1)
                 ledger = enrich.load_existing_ledger(
-                    self.mission.processed_transcripts / "enriched_utterances.jsonl")
+                    self.mission.transcript_enrichment / "enriched_utterances.jsonl")
                 self.assertEqual(len(ledger), 1)
                 self.assertEqual(len(next(iter(ledger.values()))["milestones"]), 1)
                 run_dir, = set(diagnostics_root.glob("*")) - prior_runs
@@ -587,9 +587,9 @@ class TranscriptEnrichmentTest(unittest.TestCase):
     def test_cli_extra_label_index_fails_even_with_complete_valid_target_rows(self):
         (self.mission.web_dir / "PAO.csv").write_text(f"2026-04-01T18:00:00Z|{self.text}\n")
         self.run_cli([assessment(0, [milestone()]), assessment(99, [])], expected_exit=1)
-        ledger = enrich.load_existing_ledger(self.mission.processed_transcripts / "enriched_utterances.jsonl")
+        ledger = enrich.load_existing_ledger(self.mission.transcript_enrichment / "enriched_utterances.jsonl")
         self.assertEqual(len(ledger), 1)
-        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+        run_dir, = (self.mission.transcript_enrichment / "diagnostics").iterdir()
         summary = json.loads((run_dir / "batches.jsonl").read_text(encoding="utf-8"))
         self.assertEqual(summary["parsed"], 1)
         self.assertEqual(summary["missing"], [])
@@ -598,10 +598,10 @@ class TranscriptEnrichmentTest(unittest.TestCase):
     def test_cli_ignored_label_attribution_is_diagnostic_but_not_failure(self):
         (self.mission.web_dir / "PAO.csv").write_text(f"2026-04-01T18:00:00Z|{self.text}\n")
         self.run_cli([assessment(0, [milestone()])], keep_label_extras=True)
-        ledger = enrich.load_existing_ledger(self.mission.processed_transcripts / "enriched_utterances.jsonl")
+        ledger = enrich.load_existing_ledger(self.mission.transcript_enrichment / "enriched_utterances.jsonl")
         self.assertEqual(len(ledger), 1)
         self.assertEqual(len(next(iter(ledger.values()))["milestones"]), 1)
-        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+        run_dir, = (self.mission.transcript_enrichment / "diagnostics").iterdir()
         summary = json.loads((run_dir / "batches.jsonl").read_text(encoding="utf-8"))
         self.assertIn("ignored_label_attribution", summary["issue_counts"])
 
@@ -611,7 +611,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         (self.mission.web_dir / "PAO.csv").write_text("".join(
             f"2026-04-01T18:0{i}:00Z|{text}\n" for i, text in enumerate(texts)))
         self.run_cli([assessment(i, []) for i in range(len(texts))])
-        ledger_path = self.mission.processed_transcripts / "enriched_utterances.jsonl"
+        ledger_path = self.mission.transcript_enrichment / "enriched_utterances.jsonl"
         history = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines()]
         for index in (1, 3):
             history[index]["model"] = "old-model"
@@ -639,11 +639,11 @@ class TranscriptEnrichmentTest(unittest.TestCase):
             stream = self.run_cli([assessment(0, [milestone()])], "--backend", "strata")
         self.assertEqual(stream.call_args.kwargs["backend"], "strata")
         self.assertEqual(stream.call_args.kwargs["model"], "iq3_s")
-        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+        run_dir, = (self.mission.transcript_enrichment / "diagnostics").iterdir()
         metadata = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(metadata["backend"], "strata")
         self.assertEqual(metadata["endpoint"], "http://localhost:9999/v1")
-        ledger = enrich.load_existing_ledger(self.mission.processed_transcripts / "enriched_utterances.jsonl")
+        ledger = enrich.load_existing_ledger(self.mission.transcript_enrichment / "enriched_utterances.jsonl")
         record, = ledger.values()
         self.assertEqual(record["model"], "iq3_s")
         self.assertEqual(record["backend"], "strata")
@@ -681,7 +681,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
             "2026-04-01T18:01:00Z|Second utterance.\n"
             "2026-04-01T18:02:00Z|Third utterance.\n")
         self.run_cli([assessment(i, []) for i in range(3)])
-        path = self.mission.processed_transcripts / "enriched_utterances.jsonl"
+        path = self.mission.transcript_enrichment / "enriched_utterances.jsonl"
         records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         records[1].update(backend="strata", model="iq3_s")
         records[2].pop("model")
@@ -705,7 +705,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         with patch.object(enrich, "SYSTEM_PROMPT", enrich.SYSTEM_PROMPT + "\nRevised instructions."), \
              patch.object(enrich, "PROMPT_VERSION", revised_prompt_version):
             self.run_cli([assessment(0, [])], "--force", "--reasoning-effort", "low", "--max-tokens", "4096")
-        path = self.mission.processed_transcripts / "enriched_utterances.jsonl"
+        path = self.mission.transcript_enrichment / "enriched_utterances.jsonl"
         old, new = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(old["assessment_version"], new["assessment_version"])
         self.assertNotEqual(old["run_id"], new["run_id"])
@@ -730,7 +730,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
     def test_cli_migrates_legacy_cache_and_resumes_without_duplicate_events(self):
         (self.mission.web_dir / "PAO.csv").write_text(f"2026-04-01T18:00:00Z|{self.text}\n")
         u = enrich.load_all_utterances(self.mission)[0]
-        ledger = self.mission.processed_transcripts / "enriched_utterances.jsonl"
+        ledger = self.mission.transcript_enrichment / "enriched_utterances.jsonl"
         ledger.write_text(json.dumps({**u, "event_id": "new:walkout"}) + "\n")
         rows = [assessment(0, [milestone(), milestone("Departure for pad", "They are departing for the pad.")])]
         stream = self.run_cli(rows, "--test-batches", "1")
@@ -751,7 +751,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         first = self.read_milestones()[0]
         self.run_cli([assessment(0, [])], "--force", "--start-utc", "2026-04-01T18:01:00Z")
         self.assertEqual(self.read_milestones(), [first])
-        csv = (self.mission.processed_transcripts / "PAO_enriched.csv").read_text(encoding="utf-8")
+        csv = (self.mission.transcript_enrichment / "PAO_enriched.csv").read_text(encoding="utf-8")
         self.assertEqual(len(csv.splitlines()), 2)
         self.run_cli([], "--force", "--start-utc", "2026-04-12T00:00:00Z").assert_not_called()
         self.assertEqual(self.read_milestones(), [first])

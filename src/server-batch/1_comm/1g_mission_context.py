@@ -1,7 +1,7 @@
 """Step 1g — Build hierarchical mission context from investigated history.
 
 Consumes the completed outputs of Step 1f under:
-  {data_dir}/{mission}/processed/transcripts/investigated_history/
+  {data_dir}/{mission}/processed/transcripts/1f_investigation/
 
 Along with MissionContextIndex (pre-mission Overview Timeline PDF schedule blocks &
 DFTOs, Preliminary Lunar Science Report sessions, LTP targets, itinerary.json,
@@ -18,8 +18,8 @@ photos.json, videoYt.json, videoPDS.json) to:
            -> Deduplicated Milestones & Evidence Quotes
 
 Outputs:
-  - {data_dir}/{mission}/processed/transcripts/mission_activity_tree.json
-  - {data_dir}/{mission}/processed/transcripts/mission_activities.json
+  - {data_dir}/{mission}/processed/transcripts/1g_hierarchy/mission_activity_tree.json
+  - {data_dir}/{mission}/processed/transcripts/1g_hierarchy/mission_activities.json
 """
 
 from __future__ import annotations
@@ -517,9 +517,9 @@ def _validate_hierarchy(blocks, days, utterances, milestones):
 def build_mission_activity_hierarchy(mission: MissionConfig) -> dict:
     """Assemble evidence chronology and linked report context without re-investigating 1f."""
     ctx = MissionContextIndex(mission)
-    history_root = mission.processed_transcripts / "investigated_history"
+    history_root = mission.transcript_investigation
     investigation_report = require_artifacts(history_root)
-    recovery_report = require_artifacts(mission.processed_transcripts / "recovery")
+    recovery_report = require_artifacts(mission.transcript_recovery)
     if (investigation_report["recovery_snapshot"] != recovery_report["snapshot"]
             or investigation_report["recovery_artifacts"] != recovery_report["artifacts"]):
         raise RuntimeError("Recovery changed since investigation; rerun 1f before 1g")
@@ -615,7 +615,7 @@ def build_mission_activity_hierarchy(mission: MissionConfig) -> dict:
                    for b in blocks for entry in b["crew_activities"][slug]]
         entries.sort(key=lambda e: (_parse_ts(e["start_utc"]), e["activity"]))
         crew_timelines[slug] = {**CREW_INFO[slug], "activity_count": len(entries), "timeline": entries}
-    if require_artifacts(history_root) != investigation_report or require_artifacts(mission.processed_transcripts / "recovery") != recovery_report:
+    if require_artifacts(history_root) != investigation_report or require_artifacts(mission.transcript_recovery) != recovery_report:
         raise RuntimeError("History inputs changed while building hierarchy; retry after preceding stages finish")
     return {
         "schema_version": 2, "mission_id": mission.slug, "mission_name": mission.name,
@@ -623,8 +623,8 @@ def build_mission_activity_hierarchy(mission: MissionConfig) -> dict:
         "sources": {
             "preflight_planned_pdf": "pdfs/artemis-ii-overview-timeline-public-final.pdf (as-planned, not as-executed)",
             "science_report_pdf": "pdfs/Artemis II_Preliminary Science Report.pdf (retrospective evidence)",
-            "enriched_transcripts": "investigated_history/utterances.jsonl",
-            "detected_milestones": "investigated_history/milestones.jsonl",
+            "enriched_transcripts": "1f_investigation/utterances.jsonl",
+            "detected_milestones": "1f_investigation/milestones.jsonl",
             "investigation_snapshot": investigation_report["snapshot"],
             "investigation_artifacts": investigation_report["artifacts"],
         },
@@ -656,10 +656,10 @@ def main() -> None:
     mission = MISSIONS[args.mission]
     mission.ensure_dirs()
 
-    with stage_lock(mission.processed_transcripts / "hierarchy"):
+    with stage_lock(mission.transcript_hierarchy):
         tree = build_mission_activity_hierarchy(mission)
-        proc_out = mission.processed_transcripts / "mission_activity_tree.json"
-        activities_out = mission.processed_transcripts / "mission_activities.json"
+        proc_out = mission.transcript_hierarchy / "mission_activity_tree.json"
+        activities_out = mission.transcript_hierarchy / "mission_activities.json"
         atomic_json(proc_out, tree)
         atomic_json(activities_out, tree)
 

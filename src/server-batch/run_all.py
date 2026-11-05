@@ -295,7 +295,7 @@ def main():
     start = time.time()
 
     for step_id, module_path, description, _ in steps_to_run:
-        diagnostic_root = mission.processed_transcripts / "enrichment_diagnostics"
+        diagnostic_root = mission.transcript_enrichment / "diagnostics"
         prior_runs = {p.parent.name for p in diagnostic_root.glob("*/run.json")} if step_id == "1d" else set()
         ok = run_step(step_id, module_path, description, args.mission,
                       args.backend, args.model, args.reassess_model, args.hide_reasoning,

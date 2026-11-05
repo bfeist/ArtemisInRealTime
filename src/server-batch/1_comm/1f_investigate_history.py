@@ -469,9 +469,9 @@ def retry_review(task, previous, batch_size, work, attempt, settings):
 
 
 def run_investigations(mission, args, client=None) -> dict:
-    root = mission.processed_transcripts / "investigated_history"
+    root = mission.transcript_investigation
     with stage_lock(root):
-        recovery_root = mission.processed_transcripts / "recovery"
+        recovery_root = mission.transcript_recovery
         recovery_report = require_artifacts(recovery_root)
         records = read_jsonl(recovery_root / "utterances.jsonl")
         candidates = read_jsonl(recovery_root / "milestones.jsonl")
@@ -502,7 +502,8 @@ def run_investigations(mission, args, client=None) -> dict:
                 raise RuntimeError("Selective recovery requires an existing checkpoint snapshot; keep the original base settings")
             work.mkdir(parents=True, exist_ok=True)
             atomic_json(work / "snapshot.json", {"recovery": recovery_report, "sources": index.identity,
-                                                "settings": client.settings, "at": now()})
+                                                "settings": client.settings, "at": now(),
+                                                "coverage_size": args.coverage_size, "max_rounds": args.max_rounds})
             # Snapshot exact source text once; citations remain auditable if upstream catalogs later change.
             if not (work / "sources.jsonl").exists():
                 atomic_jsonl(work / "sources.jsonl", index.docs.values())

@@ -43,10 +43,10 @@ class MissionHierarchyTest(unittest.TestCase):
                 "start_ts": hierarchy._parse_ts(start), "end_ts": hierarchy._parse_ts(end)}
 
     def build(self, rows, events=(), plans=()):
-        recovery = self.root / "recovery"
+        recovery = self.mission.transcript_recovery
         common.publish(recovery, rows, events, {"complete": True, "snapshot": "recovery"})
         recovery_report = common.require_artifacts(recovery)
-        common.publish(self.root / "investigated_history", rows, events,
+        common.publish(self.mission.transcript_investigation, rows, events,
                        {"complete": True, "snapshot": "investigation", "recovery_snapshot": "recovery",
                         "recovery_artifacts": recovery_report["artifacts"], "unresolved_events": 0,
                         "unresolved_labels": 0})

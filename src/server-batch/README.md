@@ -181,6 +181,29 @@ To start recovery alongside an active 1d, select only `--step 1e` and add
 `--follow --source-run RUN_ID`. Recovery uses completed batches and separate
 output files; downstream investigation/hierarchy still wait for completion.
 
+History data is grouped by processing step:
+
+```text
+processed/transcripts/
+  1d_enrichment/      # Original ledger, candidate milestones, CSVs, diagnostics
+  1e_recovery/        # Recovered source rows, repair checkpoints and requests
+  1f_investigation/   # Investigated history, source cache, checkpoints and requests
+  1g_hierarchy/       # mission_activity_tree.json and mission_activities.json
+  comm/              # Source transcripts from the comm import/transcription stages
+  pds/               # Supplied PDS transcript inputs
+  yt/                # YouTube transcript processing
+```
+
+For an existing completed legacy dataset, stop history processing and run
+`uv run migrate_transcript_history.py --mission artemis-ii` to preview, then add
+`--apply`. This moves the data, rebases checkpoint identities and stored paths,
+and verifies the original artifact hashes. It stages superseded runs, backups,
+and obsolete request attempts in `_delete_obsolete_history/` for deletion after
+verification. The receipt is saved under `processed/transcript-history-cleanup/`.
+Current unresolved investigations remain part of the retained dataset.
+For nondefault original batching/retrieval settings, pass the migration's
+corresponding flags; newer snapshots record those settings themselves.
+
 ## Running an individual script directly
 
 Each step module has a `main()` and accepts `--mission`:

@@ -55,7 +55,7 @@ def select_run(root: Path, source_run: str | None = None) -> Path:
 
 
 def recovery_plan(mission, source_run: str | None = None, follow: bool = False):
-    run_dir = select_run(mission.processed_transcripts / "enrichment_diagnostics", source_run)
+    run_dir = select_run(mission.transcript_enrichment / "diagnostics", source_run)
     meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     summaries = ([json.loads(line) for line in completed_lines(run_dir / "batches.jsonl")]
                  if follow else read_jsonl(run_dir / "batches.jsonl"))
@@ -65,7 +65,7 @@ def recovery_plan(mission, source_run: str | None = None, follow: bool = False):
     finished = len(numbers) == meta["batches"]
     if not finished and not follow:
         raise RuntimeError("The selected 1d run is still running or was interrupted; finish it before 1e")
-    ledger_path = mission.processed_transcripts / "enriched_utterances.jsonl"
+    ledger_path = mission.transcript_enrichment / "enriched_utterances.jsonl"
     stable_paths = [mission.web_dir / name for name in
                     ("comm.csv", "PAO.csv", "itinerary.json", "photos.json", "videoYt.json", "videoPDS.json")]
     stable_paths += [run_dir / "run.json", Path(__file__).with_name("mission_context.py")]
@@ -107,7 +107,7 @@ def unresolved_record(u: dict, source_run: str, error: str, previous: dict | Non
 
 
 def recover(mission, args, client=None) -> dict:
-    root = mission.processed_transcripts / "recovery"
+    root = mission.transcript_recovery
     with stage_lock(root):
         run_dir, utterances, latest, missing, pending, checksums, identity, progress = recovery_plan(
             mission, args.source_run, getattr(args, "follow", False))
@@ -118,7 +118,8 @@ def recover(mission, args, client=None) -> dict:
         work = root / "work" / work_id
         work.mkdir(parents=True, exist_ok=True)
         atomic_json(work / "snapshot.json", {"inputs": checksums, "source_run": run_dir.name,
-                                            "settings": client.settings})
+                                            "settings": client.settings, "batch_size": args.batch_size,
+                                            "context_lines": args.context_lines})
         current = {u["uid"]: u for u in utterances}
         positions = {u["uid"]: i for i, u in enumerate(utterances)}
         fingerprints = {}
@@ -283,8 +284,8 @@ def follow_recovery(mission, args, recover_fn=None, sleep_fn=None):
     recover_fn = recover_fn or recover
     sleep_fn = sleep_fn or time.sleep
     if not args.source_run:
-        args.source_run = select_run(mission.processed_transcripts / "enrichment_diagnostics").name
-    diagnostics = mission.processed_transcripts / "enrichment_diagnostics" / args.source_run / "batches.jsonl"
+        args.source_run = select_run(mission.transcript_enrichment / "diagnostics").name
+    diagnostics = mission.transcript_enrichment / "diagnostics" / args.source_run / "batches.jsonl"
     previous_marker = None
     while True:
         marker = digest([line.decode("utf-8") for line in completed_lines(diagnostics)])

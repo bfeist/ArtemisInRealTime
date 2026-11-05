@@ -65,7 +65,7 @@ class SourceIndex:
                 if not path.exists():
                     self.warnings.append(f"Missing reference PDF: {path}")
                     continue
-                cache = (mission.processed_transcripts / "investigated_history" / "source_cache" /
+                cache = (mission.transcript_investigation / "source_cache" /
                          f"{digest([str(path), file_digest(path), pypdf.__version__, fontTools.__version__])}.json") if mission else None
                 if cache and cache.exists():
                     pages = json.loads(cache.read_text(encoding="utf-8"))

@@ -225,7 +225,7 @@ An optional `event_id` links a directly matching catalog reference. Missing
 catalog links do not prevent discovery; photo filenames and video IDs are
 media references and cannot be used as catalog event IDs.
 
-Outputs under `processed/transcripts/`:
+Outputs under `processed/transcripts/1d_enrichment/`:
 
 - `enriched_utterances.jsonl`: append-only assessment ledger, with a schema
   version and a `milestones` array on each assessed utterance. Latest record
@@ -239,8 +239,8 @@ Outputs under `processed/transcripts/`:
   batch, so resuming or forcing reassessment removes superseded detections.
   This replaces the old format that copied only utterances with event IDs.
 
-`processed/transcripts/comm_enriched.csv` and
-`processed/transcripts/PAO_enriched.csv` retain their existing column layouts.
+`processed/transcripts/1d_enrichment/comm_enriched.csv` and
+`processed/transcripts/1d_enrichment/PAO_enriched.csv` retain their existing column layouts.
 Their `event_id` column contains the first matched catalog link, if
 any; use the milestone JSONL for the full set of discovered developments.
 Preceding context includes already captured milestones to reduce repeated
@@ -345,7 +345,7 @@ and the derived milestone stream, but skips the final processing CSV export.
 `--force` reassesses the selected range while retaining cached assessments
 outside it. Older ledger entries remain available on disk for audit.
 
-Each run also writes `processed/transcripts/enrichment_diagnostics/{run_id}/`:
+Each run also writes `processed/transcripts/1d_enrichment/diagnostics/{run_id}/`:
 
 - `run.json` records the model, arguments, schema version and both system prompts.
 - `batches.jsonl` records each batch's timing, token usage, stream finish reason,
@@ -452,7 +452,7 @@ unresolved recovery record; it is never silently discarded or called filler.
 `complete` means every recovery target was attempted and every source row is
 retained, not that every model request succeeded or every assertion is true.
 
-Outputs under `processed/transcripts/recovery/`:
+Outputs under `processed/transcripts/1e_recovery/`:
 
 - `utterances.jsonl`, `milestones.jsonl`: complete source rows and candidate events.
 - `comm_enriched.csv`, `PAO_enriched.csv`: processing-only CSV projections.
@@ -495,7 +495,7 @@ unique `id`, ISO UTC `t`, `text`, `origin`, `kind` (`transcript`, `reference`, o
 `caption`), and boolean `planned_only`. A reference intended as execution evidence
 also needs `as_executed=true`; catalog/media metadata alone cannot prove execution.
 
-Outputs under `processed/transcripts/investigated_history/`:
+Outputs under `processed/transcripts/1f_investigation/`:
 
 - `utterances.jsonl`, `milestones.jsonl`, `comm_enriched.csv`, `PAO_enriched.csv`:
   revised rows and only evidence-supported events. Rows with unresolved labels
@@ -585,8 +585,8 @@ excluded from asserted activity clusters, and reference-only sub-blocks remain
 explicitly unconfirmed. Planned blocks are marked executed only when their own
 investigated lead establishes execution; nearby talk or a photo does not suffice.
 
-Writes `processed/transcripts/mission_activity_tree.json` and
-`processed/transcripts/mission_activities.json`, with unresolved counts in the
+Writes `processed/transcripts/1g_hierarchy/mission_activity_tree.json` and
+`processed/transcripts/1g_hierarchy/mission_activities.json`, with unresolved counts in the
 summary and investigation provenance on milestone reports. These are processing
 artifacts for review and subsequent publication, not automatic web updates.
 

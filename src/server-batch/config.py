@@ -254,6 +254,22 @@ class MissionConfig:
         return self.data_dir / "processed" / "transcripts"
 
     @property
+    def transcript_enrichment(self) -> Path:
+        return self.processed_transcripts / "1d_enrichment"
+
+    @property
+    def transcript_recovery(self) -> Path:
+        return self.processed_transcripts / "1e_recovery"
+
+    @property
+    def transcript_investigation(self) -> Path:
+        return self.processed_transcripts / "1f_investigation"
+
+    @property
+    def transcript_hierarchy(self) -> Path:
+        return self.processed_transcripts / "1g_hierarchy"
+
+    @property
     def comm_audio_cache(self) -> Path:
         """Prepared playback audio; step 1c publishes only referenced recordings."""
         return self.data_dir / "processed" / "comm_audio"
@@ -304,6 +320,10 @@ class MissionConfig:
             self.web_photos_lowres,
             self.web_photos_hires,
             self.processed_transcripts,
+            self.transcript_enrichment,
+            self.transcript_recovery,
+            self.transcript_investigation,
+            self.transcript_hierarchy,
             self.io_cache,
             self.web_dir,
             self.yt_video_dir,

@@ -80,7 +80,7 @@ class HistoryPipelineTest(unittest.TestCase):
                       "topic": "Conference setup", "crew": [], "milestones": [],
                       "assessment_version": enrich.ASSESSMENT_VERSION, "run_id": "old"}
                      for u in self.utterances]
-        self.run = self.root / "enrichment_diagnostics" / "20261101T032509Z_fixture"
+        self.run = self.mission.transcript_enrichment / "diagnostics" / "20261101T032509Z_fixture"
         self.run.mkdir(parents=True)
 
     def diagnostics(self, failed_indices=(0,), complete=True):
@@ -89,7 +89,7 @@ class HistoryPipelineTest(unittest.TestCase):
         summary = {"batch": 1, "expected": 2, "parsed": 2 - len(missing), "missing": missing,
                    "stages_file": "batch_00001_stages.json", "detail_file": "batch_00001.json"}
         common.atomic_jsonl(self.run / "batches.jsonl", [summary] if complete else [])
-        common.atomic_jsonl(self.root / "enriched_utterances.jsonl", self.rows)
+        common.atomic_jsonl(self.mission.transcript_enrichment / "enriched_utterances.jsonl", self.rows)
         return summary
 
     def extraction(self):
@@ -133,7 +133,7 @@ class HistoryPipelineTest(unittest.TestCase):
         return index
 
     def publish_recovery(self, candidates=None):
-        common.publish(self.root / "recovery", self.rows, candidates or [],
+        common.publish(self.mission.transcript_recovery, self.rows, candidates or [],
                        {"complete": True, "snapshot": "fixture"})
 
     def candidate(self, **extra):
@@ -158,7 +158,7 @@ class HistoryPipelineTest(unittest.TestCase):
         diagnostic_line = json.dumps(second).encode() + b"\n"
         ledger_line = json.dumps({**self.rows[1], "run_id": self.run.name, "batch": 2}).encode() + b"\n"
         (self.run / "batches.jsonl").write_bytes(json.dumps(summary).encode() + b"\n" + (diagnostic_line[:12] if partial_second else b""))
-        (self.root / "enriched_utterances.jsonl").write_bytes(json.dumps(self.rows[0]).encode() + b"\n" +
+        (self.mission.transcript_enrichment / "enriched_utterances.jsonl").write_bytes(json.dumps(self.rows[0]).encode() + b"\n" +
                                                            (ledger_line[:12] if partial_second else b""))
         return diagnostic_line, ledger_line
 
@@ -167,22 +167,22 @@ class HistoryPipelineTest(unittest.TestCase):
         extraction = {"threads": [{"id": "t1", "subject": "conference", "statements": [
             {"indices": [0], "kind": "report", "summary": "Configured", "crew": []}]}], "developments": []}
         client = FakeClient([extraction, self.label()])
-        before = (self.root / "enriched_utterances.jsonl").read_bytes()
+        before = (self.mission.transcript_enrichment / "enriched_utterances.jsonl").read_bytes()
         with patch.object(enrich, "MissionContextIndex", EmptyContext), contextlib.redirect_stdout(io.StringIO()):
             live = recover.recover(self.mission, options(follow=True), client)
-        self.assertEqual((self.root / "enriched_utterances.jsonl").read_bytes(), before)
+        self.assertEqual((self.mission.transcript_enrichment / "enriched_utterances.jsonl").read_bytes(), before)
         self.assertFalse(live["complete"])
         self.assertEqual(live["completed_batches"], 1)
         self.assertEqual(live["recovery_targets"], 1)
         self.assertEqual(live["awaiting_1d"], 1)
         self.assertEqual(len(client.calls), 2)
         with self.assertRaisesRegex(RuntimeError, "incomplete"):
-            common.require_artifacts(self.root / "recovery")
-        with (self.root / "enriched_utterances.jsonl").open("ab") as fh:
+            common.require_artifacts(self.mission.transcript_recovery)
+        with (self.mission.transcript_enrichment / "enriched_utterances.jsonl").open("ab") as fh:
             fh.write(ledger_line[12:])
         with (self.run / "batches.jsonl").open("ab") as fh:
             fh.write(diagnostic_line[12:])
-        before = (self.root / "enriched_utterances.jsonl").read_bytes()
+        before = (self.mission.transcript_enrichment / "enriched_utterances.jsonl").read_bytes()
         resumed = FakeClient()
         with patch.object(enrich, "MissionContextIndex", EmptyContext), contextlib.redirect_stdout(io.StringIO()):
             final = recover.recover(self.mission, options(), resumed)
@@ -190,12 +190,12 @@ class HistoryPipelineTest(unittest.TestCase):
         self.assertEqual(final["work_snapshot"], live["work_snapshot"])
         self.assertEqual(final["awaiting_1d"], 0)
         self.assertFalse(resumed.calls)
-        self.assertEqual((self.root / "enriched_utterances.jsonl").read_bytes(), before)
-        common.require_artifacts(self.root / "recovery")
+        self.assertEqual((self.mission.transcript_enrichment / "enriched_utterances.jsonl").read_bytes(), before)
+        common.require_artifacts(self.mission.transcript_recovery)
 
     def test_follow_does_not_process_targets_the_producer_has_not_attempted(self):
         self.diagnostics(complete=False)
-        (self.root / "enriched_utterances.jsonl").write_bytes(b'{"uid":"unfinished')
+        (self.mission.transcript_enrichment / "enriched_utterances.jsonl").write_bytes(b'{"uid":"unfinished')
         client = FakeClient()
         with patch.object(enrich, "MissionContextIndex", EmptyContext), contextlib.redirect_stdout(io.StringIO()):
             report = recover.recover(self.mission, options(follow=True), client)
@@ -212,7 +212,7 @@ class HistoryPipelineTest(unittest.TestCase):
         class GrowingClient(FakeClient):
             def request(inner, system, prompt, key):
                 if not inner.calls:
-                    with (test.root / "enriched_utterances.jsonl").open("ab") as fh:
+                    with (test.mission.transcript_enrichment / "enriched_utterances.jsonl").open("ab") as fh:
                         fh.write(ledger_line)
                     with (test.run / "batches.jsonl").open("ab") as fh:
                         fh.write(diagnostic_line)
@@ -270,7 +270,7 @@ class HistoryPipelineTest(unittest.TestCase):
             "extraction": {"extraction": self.extraction()}}})
         common.atomic_json(self.run / "batch_00001.json", {"target_batch": self.utterances,
                                                          "parse_issues": [{"reason": "invalid_label_fields"}]})
-        original = (self.root / "enriched_utterances.jsonl").read_bytes()
+        original = (self.mission.transcript_enrichment / "enriched_utterances.jsonl").read_bytes()
         client = FakeClient([self.label()])
         with patch.object(enrich, "MissionContextIndex", EmptyContext), contextlib.redirect_stdout(io.StringIO()):
             report = recover.recover(self.mission, options(), client)
@@ -280,11 +280,11 @@ class HistoryPipelineTest(unittest.TestCase):
         self.assertEqual(len(client.calls), 1)
         self.assertEqual(len(resumed.calls), 0)
         self.assertIn("repair_only_indices", client.calls[0][1])
-        rows = common.read_jsonl(self.root / "recovery" / "utterances.jsonl")
+        rows = common.read_jsonl(self.mission.transcript_recovery / "utterances.jsonl")
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["recovery"]["method"], "saved_extraction")
         self.assertEqual(rows[1]["topic"], self.rows[1]["topic"])
-        self.assertEqual((self.root / "enriched_utterances.jsonl").read_bytes(), original)
+        self.assertEqual((self.mission.transcript_enrichment / "enriched_utterances.jsonl").read_bytes(), original)
         self.assertFalse((self.mission.web_dir / "PAO_enriched.csv").exists())
 
     def test_exhausted_recovery_retains_every_source_without_fabricated_labels(self):
@@ -295,7 +295,7 @@ class HistoryPipelineTest(unittest.TestCase):
         self.assertTrue(report["complete"])
         self.assertEqual(report["unresolved"], 2)
         self.assertEqual(len(client.calls), 5)  # Batch, then extraction + label-only for each target
-        rows = common.read_jsonl(self.root / "recovery" / "utterances.jsonl")
+        rows = common.read_jsonl(self.mission.transcript_recovery / "utterances.jsonl")
         self.assertEqual({r["uid"] for r in rows}, {u["uid"] for u in self.utterances})
         self.assertTrue(all(r["importance"] is None and r["category"] == "unassessed" for r in rows))
         self.assertTrue(all(r["recovery"]["previous_assessment"] for r in rows))
@@ -306,7 +306,7 @@ class HistoryPipelineTest(unittest.TestCase):
         with patch.object(enrich, "MissionContextIndex", EmptyContext), contextlib.redirect_stdout(io.StringIO()):
             report = recover.recover(self.mission, options(), client)
         self.assertEqual(report["labels_only_recoveries"], 1)
-        row = common.read_jsonl(self.root / "recovery" / "utterances.jsonl")[0]
+        row = common.read_jsonl(self.mission.transcript_recovery / "utterances.jsonl")[0]
         self.assertEqual(row["category"], "systems")
         self.assertEqual(row["recovery"]["extraction_status"], "unresolved")
         self.assertEqual(row["milestones"], [])
@@ -317,12 +317,12 @@ class HistoryPipelineTest(unittest.TestCase):
             report = recover.recover(self.mission, options(batch_size=1, limit=1), FakeClient([RuntimeError("offline")]))
         self.assertFalse(report["complete"])
         with self.assertRaisesRegex(RuntimeError, "incomplete"):
-            common.require_artifacts(self.root / "recovery")
+            common.require_artifacts(self.mission.transcript_recovery)
         self.publish_recovery()
-        with (self.root / "recovery" / "utterances.jsonl").open("a") as f:
+        with (self.mission.transcript_recovery / "utterances.jsonl").open("a") as f:
             f.write("{}\n")
         with self.assertRaisesRegex(RuntimeError, "Artifact changed"):
-            common.require_artifacts(self.root / "recovery")
+            common.require_artifacts(self.mission.transcript_recovery)
 
     def test_search_finds_nonlocal_sources_and_read_preserves_channel_context(self):
         distant = {**self.utterances[0], "uid": "distant", "text": "Conference was cancelled hours later.",
@@ -480,7 +480,7 @@ class HistoryPipelineTest(unittest.TestCase):
         self.assertTrue(report["complete"])
         self.assertEqual(report["verified_events"], 1)
         self.assertEqual(report["label_reconciliation_tasks"], 1)
-        reviewed = common.read_jsonl(self.root / "investigated_history" / "utterances.jsonl")
+        reviewed = common.read_jsonl(self.mission.transcript_investigation / "utterances.jsonl")
         self.assertEqual(reviewed[0]["topic"], "Conference configured; execution not established")
         self.assertEqual(len(resumed.calls), 0)
         self.assertEqual(report["snapshot"], again["snapshot"])
@@ -526,7 +526,7 @@ class HistoryPipelineTest(unittest.TestCase):
         self.assertEqual([call[1]["task"]["type"] for call in base.calls], ["labels"])
         retry_args = make_retry.call_args.args[0]
         self.assertEqual((retry_args.reasoning_effort, retry_args.max_tokens), ("medium", 32768))
-        history = common.read_jsonl(self.root / "investigated_history" / "investigations.jsonl")
+        history = common.read_jsonl(self.mission.transcript_investigation / "investigations.jsonl")
         event = next(row for row in history if row["type"] == "event")
         self.assertEqual(event["settings"], retry.settings)
 
@@ -535,7 +535,7 @@ class HistoryPipelineTest(unittest.TestCase):
         failed = FakeClient(["invalid JSON"] * 15)
         with patch.object(enrich, "MissionContextIndex", EmptyContext), contextlib.redirect_stdout(io.StringIO()):
             original = investigate.run_investigations(self.mission, options(), failed)
-        work = self.root / "investigated_history" / "work" / original["snapshot"]
+        work = self.mission.transcript_investigation / "work" / original["snapshot"]
         event_path = work / ("task_" + common.digest("event:candidate:conference") + ".json")
         event_before = event_path.read_bytes()
         replies = []
@@ -552,7 +552,7 @@ class HistoryPipelineTest(unittest.TestCase):
         self.assertEqual(report["unresolved_labels"], 0)
         self.assertEqual(event_path.read_bytes(), event_before)
         self.assertEqual([call[1]["task"]["type"] for call in retry.calls], ["coverage", "coverage", "labels"])
-        reviewed = common.read_jsonl(self.root / "investigated_history" / "utterances.jsonl")
+        reviewed = common.read_jsonl(self.mission.transcript_investigation / "utterances.jsonl")
         self.assertTrue(all(r["label_review"]["status"] == "reviewed" and r["crew"] == [] for r in reviewed))
         resumed = FakeClient()
         with patch.object(enrich, "MissionContextIndex", EmptyContext), contextlib.redirect_stdout(io.StringIO()):
@@ -700,7 +700,7 @@ class HistoryPipelineTest(unittest.TestCase):
         with patch.object(enrich, "MissionContextIndex", EmptyContext), contextlib.redirect_stdout(io.StringIO()):
             report = investigate.run_investigations(self.mission, options(), client)
         self.assertEqual(report["verified_events"], 1)
-        candidates = common.read_jsonl(self.root / "investigated_history" / "candidates.jsonl")
+        candidates = common.read_jsonl(self.mission.transcript_investigation / "candidates.jsonl")
         self.assertTrue(candidates[0]["id"].startswith("discovered:"))
 
     def test_planned_activity_is_investigated_and_not_confirmed_by_nearby_talk(self):
@@ -747,6 +747,66 @@ class HistoryPipelineTest(unittest.TestCase):
             self.assertEqual("--follow" in argv, step == "1e")
             if step == "1e":
                 self.assertEqual(argv[argv.index("--poll-seconds") + 1], "12")
+
+    def test_history_layout_migration_preserves_artifacts_and_rebases_checkpoints(self):
+        migration = importlib.import_module("migrate_transcript_history")
+        self.diagnostics(failed_indices=())
+        old_diagnostics = self.root / "enrichment_diagnostics"
+        (self.mission.transcript_enrichment / "diagnostics").rename(old_diagnostics)
+        old_ledger = self.root / "enriched_utterances.jsonl"
+        (self.mission.transcript_enrichment / old_ledger.name).rename(old_ledger)
+        old_recovery = self.root / "recovery"
+        old_history = self.root / "investigated_history"
+        common.publish(old_recovery, self.rows, [], {
+            "complete": True, "snapshot": "old-recovery", "work_snapshot": "old-work",
+            "source_run": self.run.name, "input_hashes": {str(old_ledger): common.file_digest(old_ledger)}})
+        recovered = common.require_artifacts(old_recovery)
+        common.atomic_json(old_recovery / "work/old-work/snapshot.json", {"settings": FakeClient.settings})
+        common.atomic_json(old_recovery / "requests/failed.json", {"error": "transport failed"})
+        common.publish(old_history, self.rows, [], {
+            "complete": True, "snapshot": "old-history", "recovery_snapshot": "old-recovery",
+            "recovery_artifacts": recovered["artifacts"]})
+        work = old_history / "work/old-history"
+        common.atomic_json(work / "snapshot.json", {"settings": FakeClient.settings, "sources": "original-sources"})
+        common.atomic_jsonl(work / "sources.jsonl", [])
+        outcome = {"task_id": "coverage:000000", "type": "coverage", "state": "done", "at": common.now(),
+                   "retrieval": [{"initial_sources": []}], "result": {}}
+        checkpoint = work / f"task_{common.digest(outcome['task_id'])}.json"
+        common.atomic_json(checkpoint, outcome)
+        common.atomic_jsonl(old_history / "investigations.jsonl", [outcome])
+        common.atomic_json(work / "error_superseded.json", {"error": "old transport error"})
+        common.atomic_json(old_history / "work/abandoned/snapshot.json", {})
+        prefix = common.digest("coverage:000000:0")[:16]
+        for name in (f"{prefix}_20260401T010000000000.json", f"{prefix}_20260402T010000000000.json",
+                     "orphan_20260402T010000000000.json"):
+            common.atomic_json(old_history / "requests" / name, {})
+        summary = {"linked_utterances": len(self.rows)}
+        for name in ("mission_activity_tree.json", "mission_activities.json"):
+            common.atomic_json(self.root / name, {"sources": {}, "summary": summary})
+        common.atomic_json(self.root / "enrichment_benchmarks/abandoned/result.json", {})
+        with contextlib.redirect_stdout(io.StringIO()):
+            migration.migrate(self.mission)
+        self.assertTrue(old_ledger.exists())  # Preview must not mutate the dataset.
+        with contextlib.redirect_stdout(io.StringIO()):
+            receipt = migration.migrate(self.mission, apply=True)
+        self.assertTrue(receipt["complete"])
+        moved_recovery = common.require_artifacts(self.mission.transcript_recovery)
+        moved_history = common.require_artifacts(self.mission.transcript_investigation)
+        self.assertEqual(moved_recovery["artifacts"], recovered["artifacts"])
+        self.assertEqual(moved_history["recovery_snapshot"], moved_recovery["snapshot"])
+        self.assertTrue(Path(moved_history["source_snapshot"]).exists())
+        self.assertTrue((Path(moved_history["source_snapshot"]).parent / checkpoint.name).exists())
+        requests = list((self.mission.transcript_investigation / "requests").glob("*.json"))
+        self.assertEqual([p.name for p in requests], [f"{prefix}_20260402T010000000000.json"])
+        self.assertTrue((self.root / "_delete_obsolete_history").is_dir())
+        self.assertFalse(old_recovery.exists())
+        self.assertFalse(old_history.exists())
+        self.assertFalse((self.root / "hierarchy").exists())
+        tree = migration.load(self.mission.transcript_hierarchy / "mission_activity_tree.json")
+        self.assertEqual(tree["summary"], summary)
+        self.assertEqual(tree["sources"]["investigation_snapshot"], moved_history["snapshot"])
+        with self.assertRaisesRegex(RuntimeError, "outside"):
+            migration.contained(self.root.parent / "outside", self.root)
 
     def test_runner_continues_to_recovery_only_after_a_completed_failed_run(self):
         calls = []
