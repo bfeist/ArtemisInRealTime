@@ -58,6 +58,22 @@ class TranscriptStagesTest(unittest.TestCase):
             set(), self.extract() if extraction is None else extraction, diagnostics,
         )
 
+    def test_carryover_bounds_history_and_preserves_statement_kinds_without_old_indices(self):
+        targets = [{**u, "t": f"2026-04-01T18:00:0{i}Z"} for i, u in enumerate(self.batch)]
+        parsed = self.assess()
+        state = {}
+        for _ in range(25):
+            state = enrich.update_conversation_state(state, self.extract(), targets, parsed)
+        self.assertEqual(len(state["recent_threads"]), 6)
+        self.assertEqual(len(state["captured_developments"]), 20)
+        statements = state["recent_threads"][-1]["statements"]
+        self.assertEqual([s["kind"] for s in statements], ["hypothesis", "plan"])
+        self.assertTrue(all("indices" not in s for s in statements))
+        self.assertEqual(state["captured_developments"][-1]["report_utc"], targets[1]["t"])
+        # A validated development must not become captured if its label was rejected.
+        partial = enrich.update_conversation_state({}, self.extract(), targets, {0: parsed[0]})
+        self.assertEqual(partial["captured_developments"], [])
+
     def test_one_development_survives_two_reports_at_selected_evidence_anchor(self):
         parsed = self.assess()
         self.assertEqual(set(parsed), {0, 1, 2, 3})
@@ -249,6 +265,16 @@ class TranscriptStagesTest(unittest.TestCase):
     def test_missing_label_stays_pending_without_discarding_other_rows(self):
         parsed = self.assess([label(0), label(2), label(3)])
         self.assertEqual(set(parsed), {0, 2, 3})
+
+    def test_empty_tags_are_allowed_only_for_filler(self):
+        diagnostics = []
+        parsed = self.assess([
+            label(0, cat="pao_filler", tags=[]), label(1, tags=[]),
+            label(2, cat="pao_filler", tags=[""]), label(3, cat="pao_filler", tags=None),
+        ], diagnostics=diagnostics)
+        self.assertEqual(set(parsed), {0})
+        self.assertEqual(parsed[0]["tags"], [])
+        self.assertEqual([issue["index"] for issue in diagnostics], [1, 2, 3])
 
     def test_duplicate_label_index_stays_pending_without_discarding_other_rows(self):
         diagnostics = []

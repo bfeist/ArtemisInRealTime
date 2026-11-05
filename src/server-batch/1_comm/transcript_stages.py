@@ -45,7 +45,7 @@ LABEL_SYSTEM_PROMPT = """Label each target utterance using the original text and
 
 Return ONLY JSONL in ascending index order, exactly one object per target:
 {"i":0,"imp":3,"cat":"systems","tags":["water system"],"topic":"Water valve troubleshooting and diagnostic assessment"}
-Fields: i integer target index; imp integer 1..5; cat one category below; tags 1..4 short lowercase topic strings; topic concise description supported by the text/extraction, usually 4..10 words, preserving uncertainty. For anchored targets, use their first development title as the topic; Python supplies that exact title in the saved assessment. Do not replace an observation with its suspected cause. For unanchored targets, describe this utterance's contribution in context.
+Fields: i integer target index; imp integer 1..5; cat one category below; tags 1..4 short lowercase topic strings (pao_filler may use [] when there is no substantive topic); topic concise description supported by the text/extraction, usually 4..10 words, preserving uncertainty. For anchored targets, use their first development title as the topic; Python supplies that exact title in the saved assessment. Do not replace an observation with its suspected cause. For unanchored targets, describe this utterance's contribution in context.
 
 CATEGORY describes the SUBJECT, independent of channel, importance or milestone eligibility. Use this priority:
 - maneuver: burns, vehicle attitude/trajectory maneuvers and their callouts.
@@ -176,6 +176,30 @@ def parse_extraction(content: str, target_batch: list[dict], event_ids: set[str]
             item["event_id"] = event_id
         developments.append(item)
     return {"threads": threads, "developments": developments}
+
+
+def update_conversation_state(
+    state: dict, extraction: dict, targets: list[dict], assessments: dict[int, dict],
+) -> dict:
+    """Bound validated context and omit indices that are local to a past batch."""
+    threads = list(state.get("recent_threads", []))
+    for thread in extraction["threads"]:
+        threads.append({
+            "subject": thread["subject"],
+            "report_window": [targets[0]["t"], targets[-1]["t"]],
+            "statements": [
+                {key: statement[key] for key in ("kind", "summary", "crew")}
+                for statement in thread["statements"][-2:]
+            ],
+        })
+    developments = list(state.get("captured_developments", []))
+    for i in sorted(assessments):
+        for milestone in assessments[i].get("milestones", []):
+            developments.append({
+                "report_utc": targets[i]["t"],
+                **{key: milestone[key] for key in ("title", "status", "evidence")},
+            })
+    return {"recent_threads": threads[-6:], "captured_developments": developments[-20:]}
 
 
 def build_label_prompt(target_batch: list[dict], extraction: dict) -> str:

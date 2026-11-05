@@ -6,6 +6,7 @@ dependencies = [
     # ── Core ───────────────────────────────────────────────────────────────
     "beautifulsoup4",
     "certifi",
+    "fonttools",    # Decode embedded CFF fonts when reading mission-reference PDFs
     "google-api-python-client",
     "google-auth-oauthlib",
     "lxml",
@@ -14,6 +15,7 @@ dependencies = [
     "opencv-python",   # MergeMertens exposure fusion for HDR composites (step 4d2)
     "Pillow",
     "pydub",
+    "pypdf",        # Original-source page text for mission-history investigations
     "pyexiftool",      # ExifTool subprocess wrapper — reads NEF/DNG makernotes (step 4a)
     "python-dateutil",
     "rawpy",           # libraw bindings — decode NEF + DNG for tier generation (step 4d)

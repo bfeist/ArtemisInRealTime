@@ -13,9 +13,9 @@ append-only, crash-resumable JSONL ledger:
 Derived milestone stream (one record per development, with source evidence):
   {data_dir}/{mission}/processed/transcripts/detected_milestones.jsonl
 
-Also writes enriched web outputs:
-  {data_dir}/{mission}/web/comm_enriched.csv
-  {data_dir}/{mission}/web/PAO_enriched.csv
+Also writes enriched processing outputs:
+  {data_dir}/{mission}/processed/transcripts/comm_enriched.csv
+  {data_dir}/{mission}/processed/transcripts/PAO_enriched.csv
 """
 
 from __future__ import annotations
@@ -50,11 +50,12 @@ from mission_context import (  # noqa: E402
 from transcript_stages import (  # noqa: E402
     CATEGORIES, EXTRACTION_SYSTEM_PROMPT, LABEL_SYSTEM_PROMPT, MILESTONE_STATUSES,
     anchored_milestones, build_label_prompt, involved_crew, parse_extraction,
+    update_conversation_state,
 )
 
 DEFAULT_MODEL = "LLM-Alpha-512K"
 ASSESSMENT_VERSION = 2
-PROMPT_VERSION = 3  # Increment for prompt-builder changes, independently of the schema.
+PROMPT_VERSION = 5  # Increment for prompt-builder changes, independently of the schema.
 PROVENANCE_FIELDS = (
     "backend", "model", "model_provenance", "provenance_recorded_at",
     "run_id", "batch", "assessed_at", "prompt_version", "system_prompt_sha256",
@@ -176,12 +177,28 @@ def build_user_prompt(
     events_context: list[str],
     ledger: dict[str, dict] | None = None,
     context_after: list[dict] | None = None,
+    conversation_state: dict | None = None,
 ) -> str:
     lines: list[str] = []
     if events_context:
         lines.append("=== SUPPLEMENTARY MISSION REFERENCES (not an exhaustive event list) ===")
         lines.extend(events_context)
         lines.append("")
+
+    if conversation_state and any(conversation_state.values()):
+        lines.extend([
+            "=== PRIOR VALIDATED CONVERSATION STATE (historical context only) ===",
+            "Continue from these recent threads and ALREADY CAPTURED developments. "
+            "Preserve statement kinds: plans and hypotheses are not execution. "
+            "Suppress only a recap of the same action AND stage. Approval to load, "
+            "chill down, loading start, and loading completion are distinct developments; "
+            "capturing approval or preparation must not suppress a later execution report. "
+            "Use this state for interpretation, not as evidence for new developments. "
+            "All output indices and exact evidence refer only to CURRENT targets. "
+            "Reconstruct the current targets without outputting the prior state.",
+            json.dumps(conversation_state, separators=(",", ":")),
+            "",
+        ])
 
     if context_before:
         lines.append("=== PRECEDING CONTEXT (for interpretation only — do NOT output JSON for these) ===")
@@ -522,9 +539,10 @@ def parse_staged_assessments(
             continue
         seen.add(idx)
         tags = row.get("tags")
+        min_tags = 0 if row.get("cat") == "pao_filler" else 1
         if (type(row.get("imp")) is not int or not 1 <= row["imp"] <= 5
                 or not isinstance(row.get("cat"), str) or row["cat"] not in CATEGORIES
-                or not isinstance(tags, list) or not 1 <= len(tags) <= 4
+                or not isinstance(tags, list) or not min_tags <= len(tags) <= 4
                 or any(not isinstance(t, str) or not t.strip() for t in tags)
                 or not isinstance(row.get("topic"), str) or not row["topic"].strip()):
             invalid.add(idx)
@@ -707,9 +725,9 @@ def export_detected_milestones(
 
 
 def export_enriched_csvs(mission: MissionConfig, utterances: list[dict], ledger: dict[str, dict]) -> None:
-    """Write web/comm_enriched.csv and web/PAO_enriched.csv with classification columns."""
-    comm_out = mission.web_dir / "comm_enriched.csv"
-    pao_out = mission.web_dir / "PAO_enriched.csv"
+    """Write processing CSVs; publication into web/ is a separate operation."""
+    comm_out = mission.processed_transcripts / "comm_enriched.csv"
+    pao_out = mission.processed_transcripts / "PAO_enriched.csv"
 
     comm_count = 0
     pao_count = 0
@@ -749,7 +767,7 @@ def main() -> None:
     parser.add_argument("--backend", choices=["hgx", "strata"], default="hgx",
                         help="LLM backend (default: hgx; strata uses STRATA_URL)")
     parser.add_argument("--model", default=None, help="Override the selected backend's default model")
-    parser.add_argument("--batch-size", type=int, default=30, help="Utterances per LLM request (default: 30)")
+    parser.add_argument("--batch-size", type=int, default=50, help="Utterances per LLM request (default: 50)")
     parser.add_argument("--context-lines", type=int, default=5, help="Context lines before and after each batch (default: 5)")
     parser.add_argument("--test-batches", type=int, default=None, help="Run only N batches for testing/benchmarking")
     parser.add_argument("--start-utc", type=str, default=None, help="Optional ISO UTC timestamp to start from (e.g. 2026-04-01T22:30:00Z)")
@@ -797,6 +815,7 @@ def main() -> None:
     print(f"  Endpoint        : {endpoint}")
     print(f"  Model           : {model}")
     print(f"  Stages          : extraction ({args.extraction_reasoning_effort}) -> labeling ({args.reasoning_effort})")
+    print("  Carryover       : 6 recent threads + 20 captured developments")
     print(f"  Total utterances: {len(utterances):,} (comm + PAO merged chronologically)")
     print(f"  Reference index : {len(ctx_index.events):,} timeline/science/LTP/video events + {len(ctx_index.crew_photo_ts):,} crew photos")
     print(f"  Already in cache: {len(existing):,} ({ledger_path.name})")
@@ -854,7 +873,9 @@ def main() -> None:
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"  Diagnostics     : {diagnostics_dir}\n")
     batch_stats: list[dict] = []
-    failed = False
+    failed_batches = 0
+    conversation_state: dict = {}
+    previous_last_i: int | None = None
 
     with open(ledger_path, "a", encoding="utf-8") as ledger_fh:
         for b_num, idx_list in enumerate(batches, 1):
@@ -868,7 +889,17 @@ def main() -> None:
             w_end_ts = target_batch[-1]["ts"]
             nearby_events = ctx_index.query_window(w_start_ts, w_end_ts)
 
-            user_prompt = build_user_prompt(target_batch, context_before, nearby_events, existing, context_after)
+            if previous_last_i is None or first_i != previous_last_i + 1:
+                # Resume with preceding saved milestones; never carry future cached rows.
+                preceding = utterances[max(0, first_i - 300):first_i]
+                conversation_state = update_conversation_state(
+                    {}, {"threads": []}, preceding,
+                    {i: existing[u["uid"]] for i, u in enumerate(preceding) if u["uid"] in existing},
+                )
+            user_prompt = build_user_prompt(
+                target_batch, context_before, nearby_events, existing, context_after,
+                conversation_state,
+            )
 
             print(
                 f"{C_YELLOW}{C_BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{C_RESET}\n"
@@ -919,9 +950,9 @@ def main() -> None:
                 )
                 if isinstance(exc, KeyboardInterrupt):
                     raise
-                print(f"\n  ERROR assessing batch: {exc}")
-                failed = True
-                break
+                print(f"\n  ERROR assessing batch: {exc}; targets remain pending. Continuing with the next batch.")
+                failed_batches += 1
+                continue
 
             assessed_at = datetime.now(timezone.utc).isoformat()
             stage_provenance = {
@@ -970,6 +1001,11 @@ def main() -> None:
                 existing[u["uid"]] = record
                 saved_in_batch += 1
             ledger_fh.flush()
+            extraction_stage = stream_diagnostics["stages"].get(
+                "extraction_repair", stream_diagnostics["stages"]["extraction"])
+            conversation_state = update_conversation_state(
+                conversation_state, extraction_stage["extraction"], target_batch, parsed)
+            previous_last_i = idx_list[-1]
             export_detected_milestones(milestones_path, utterances, existing)
 
             stats["parsed"] = saved_in_batch
@@ -989,9 +1025,8 @@ def main() -> None:
             invalid_labels = any(issue["reason"] not in {"ignored_label_attribution", "repaired_extraction"}
                                  for issue in parse_issues)
             if saved_in_batch != len(target_batch) or stream_problem or invalid_labels:
-                print("  Batch validation failed; stopping before downstream steps. Valid rows saved; missing targets remain pending.")
-                failed = True
-                break
+                print("  Batch validation failed. Valid rows saved; missing targets remain pending. Continuing with the next batch.")
+                failed_batches += 1
 
             print(
                 f"\n{C_BOLD}Batch {b_num} Summary:{C_RESET} "
@@ -1014,7 +1049,8 @@ def main() -> None:
 
     if not args.test_batches:
         export_enriched_csvs(mission, utterances, existing)
-    if failed:
+    if failed_batches:
+        print(f"  {failed_batches} batch(es) had errors. Rerun to assess pending targets; downstream steps will wait.")
         raise SystemExit(1)
 
 

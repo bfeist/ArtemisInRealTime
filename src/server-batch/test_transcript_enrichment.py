@@ -15,7 +15,8 @@ from config import MissionConfig
 
 enrich = importlib.import_module("1_comm.1d_enrich_transcripts")
 context = importlib.import_module("1_comm.mission_context")
-phase_1e = importlib.import_module("1_comm.1e_mission_context")
+phase_1g = importlib.import_module("1_comm.1g_mission_context")
+history_common = importlib.import_module("1_comm.history_common")
 runner = importlib.import_module("run_all")
 
 
@@ -29,6 +30,21 @@ def milestone(title="Crew walkout", evidence="The crew is walking out now.", **e
 
 
 class TranscriptEnrichmentTest(unittest.TestCase):
+    def prepare_investigated_inputs(self):
+        """Fixture the post-review contract; raw 1d output must not bypass 1e/1f."""
+        records = list(enrich.load_existing_ledger(self.mission.processed_transcripts / "enriched_utterances.jsonl").values())
+        for row in records:
+            row["label_review"] = {"status": "reviewed"}
+        milestones = self.read_milestones()
+        for item in milestones:
+            item["verification"] = "supported"
+        recovery = self.mission.processed_transcripts / "recovery"
+        history_common.publish(recovery, records, milestones, {"complete": True, "snapshot": "fixture"})
+        manifest = history_common.require_artifacts(recovery)
+        history_common.publish(self.mission.processed_transcripts / "investigated_history", records, milestones,
+            {"complete": True, "snapshot": "fixture", "recovery_snapshot": "fixture",
+             "recovery_artifacts": manifest["artifacts"], "unresolved_events": 0, "unresolved_labels": 0})
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -187,7 +203,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
             urlopen.assert_not_called()
 
     def test_runner_passes_backend_options_only_to_llm_step(self):
-        for step_id in ("1d", "1e"):
+        for step_id in ("1d", "1g"):
             with self.subTest(step_id=step_id), \
                  patch.object(runner.importlib, "import_module") as load, \
                  patch.object(runner.importlib, "reload"), \
@@ -209,7 +225,7 @@ class TranscriptEnrichmentTest(unittest.TestCase):
                  patch.object(runner, "MISSIONS", {"artemis-ii": self.mission}), \
                  patch.object(runner.importlib, "import_module") as load, \
                  patch.object(runner.importlib, "reload"), \
-                 patch.object(sys, "argv", ["run_all.py", "--mission", "artemis-ii", "--step", "1d", "1e", *force_args, *reasoning_args]), \
+                 patch.object(sys, "argv", ["run_all.py", "--mission", "artemis-ii", "--step", "1d", "1g", *force_args, *reasoning_args]), \
                  contextlib.redirect_stdout(io.StringIO()):
                 seen = []
                 load.return_value.main.side_effect = lambda: seen.append(sys.argv.copy())
@@ -226,6 +242,37 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         self.assertIn("not an exhaustive event list", prompt)
         self.assertIn("[ALREADY CAPTURED] Crew walkout (started)", prompt)
         self.assertIn("FOLLOWING CONTEXT (for interpretation only", prompt)
+
+    def test_cli_carries_validated_context_into_the_next_batch(self):
+        (self.mission.web_dir / "PAO.csv").write_text("".join(
+            f"2026-04-01T18:0{i}:00Z|{self.text}\n" for i in range(2)))
+        stream = self.run_cli([assessment(0, [milestone()])], "--batch-size", "1")
+        prompts = [call.kwargs["user_prompt"] for call in stream.call_args_list
+                   if call.kwargs["output_format"] == "JSON"]
+        state_line = next(line for line in prompts[1].splitlines()
+                          if line.startswith('{"recent_threads"'))
+        state = json.loads(state_line)
+        self.assertEqual(state["recent_threads"][0]["statements"][0]["summary"], self.text)
+        self.assertEqual(state["captured_developments"], [{
+            "report_utc": "2026-04-01T18:00:00Z", "title": "Crew walkout",
+            "status": "started", "evidence": "The crew is walking out now.",
+        }])
+
+    def test_cli_resume_seeds_only_preceding_saved_developments(self):
+        (self.mission.web_dir / "PAO.csv").write_text("".join(
+            f"2026-04-01T18:0{i}:00Z|{self.text}\n" for i in range(3)))
+        self.run_cli([assessment(i, [milestone()]) for i in range(3)])
+        ledger_path = self.mission.processed_transcripts / "enriched_utterances.jsonl"
+        records = list(enrich.load_existing_ledger(ledger_path).values())
+        with ledger_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({**records[1], "assessment_version": 0}) + "\n")
+        stream = self.run_cli([assessment(0, [milestone()])])
+        state_line = next(line for line in stream.call_args_list[0].kwargs["user_prompt"].splitlines()
+                          if line.startswith('{"recent_threads"'))
+        state = json.loads(state_line)
+        self.assertEqual([m["report_utc"] for m in state["captured_developments"]],
+                         ["2026-04-01T18:00:00Z"])
+        self.assertEqual(state["recent_threads"], [])
 
     def test_reference_ids_exclude_media(self):
         (self.mission.web_dir / "itinerary.json").write_text(json.dumps({"events": [
@@ -464,6 +511,59 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         self.assertEqual(json.loads(stages["labeling"]["user_prompt"])["extraction"],
                          stages["extraction"]["extraction"])
 
+    def check_failed_batch_continues_and_resumes(self, request_failure=False):
+        (self.mission.web_dir / "PAO.csv").write_text("".join(
+            f"2026-04-01T18:0{i}:00Z|Report {i}.\n" for i in range(4)))
+        utterances = enrich.load_all_utterances(self.mission)
+        rows = [assessment(i, []) for i in range(2)]
+        stats = {"elapsed_s": 1, "ttft_s": 0.1, "completion_tokens": 100,
+                 "prompt_tokens": 50, "tok_per_s": 100,
+                 "finish_reason": "stop", "done_received": True}
+
+        def response(content):
+            return "", content, stats.copy()
+
+        replies = [RuntimeError("connection lost")] if request_failure else [
+            response(json.dumps(self.fixture_extraction(rows, utterances[:2]))),
+            response(json.dumps({key: value for key, value in rows[0].items() if key != "milestones"})),
+        ]
+        replies.extend([
+            response(json.dumps(self.fixture_extraction(rows, utterances[2:]))),
+            response("\n".join(json.dumps({key: value for key, value in row.items()
+                                          if key != "milestones"}) for row in rows)),
+        ])
+        with patch.object(enrich, "MISSIONS", {"test": self.mission}), \
+             patch.object(enrich, "stream_llm_assessment", side_effect=replies) as stream, \
+             patch("sys.argv", ["1d", "--mission", "test", "--quiet", "--batch-size", "2"]), \
+             contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                enrich.main()
+        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(stream.call_count, len(replies))
+        ledger_path = self.mission.processed_transcripts / "enriched_utterances.jsonl"
+        ledger = enrich.load_existing_ledger(ledger_path)
+        expected = utterances[2:] if request_failure else [utterances[0], *utterances[2:]]
+        self.assertEqual(set(ledger), {u["uid"] for u in expected})
+        run_dir, = (self.mission.processed_transcripts / "enrichment_diagnostics").iterdir()
+        summaries = [json.loads(line) for line in (run_dir / "batches.jsonl").read_text().splitlines()]
+        self.assertEqual(len(summaries), 2)
+        self.assertTrue(summaries[0]["missing"])
+        self.assertEqual(summaries[1]["missing"], [])
+        self.assertEqual(len((self.mission.processed_transcripts / "PAO_enriched.csv").read_text().splitlines()), len(expected))
+
+        pending_rows = rows if request_failure else [assessment(0, [])]
+        self.assertEqual(self.run_cli(pending_rows).call_count, 2)
+        self.assertEqual(set(enrich.load_existing_ledger(ledger_path)), {u["uid"] for u in utterances})
+        history = ledger_path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(history), 4)
+        self.run_cli([]).assert_not_called()
+
+    def test_cli_incomplete_batch_continues_then_resume_only_assesses_missing_rows(self):
+        self.check_failed_batch_continues_and_resumes()
+
+    def test_cli_request_failure_continues_then_resume_only_assesses_missing_rows(self):
+        self.check_failed_batch_continues_and_resumes(request_failure=True)
+
     def test_cli_complete_labels_with_unclean_stream_keep_rows_but_fail(self):
         (self.mission.web_dir / "PAO.csv").write_text(f"2026-04-01T18:00:00Z|{self.text}\n")
         diagnostics_root = self.mission.processed_transcripts / "enrichment_diagnostics"
@@ -570,7 +670,8 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         self.assertEqual(event["assessment"]["run_id"], run_dir.name)
         self.assertEqual(event["assessment"]["model"], "iq3_s")
         self.run_cli([]).assert_not_called()
-        tree = phase_1e.build_mission_activity_hierarchy(self.mission)
+        self.prepare_investigated_inputs()
+        tree = phase_1g.build_mission_activity_hierarchy(self.mission)
         self.assertEqual(tree["summary"]["raw_milestone_detections"], 1)
         self.assertEqual(tree["merged_milestones"][0]["reports"][0]["assessment"], event["assessment"])
 
@@ -650,13 +751,13 @@ class TranscriptEnrichmentTest(unittest.TestCase):
         first = self.read_milestones()[0]
         self.run_cli([assessment(0, [])], "--force", "--start-utc", "2026-04-01T18:01:00Z")
         self.assertEqual(self.read_milestones(), [first])
-        csv = (self.mission.web_dir / "PAO_enriched.csv").read_text(encoding="utf-8")
+        csv = (self.mission.processed_transcripts / "PAO_enriched.csv").read_text(encoding="utf-8")
         self.assertEqual(len(csv.splitlines()), 2)
         self.run_cli([], "--force", "--start-utc", "2026-04-12T00:00:00Z").assert_not_called()
         self.assertEqual(self.read_milestones(), [first])
 
-    def test_crew_attribution_and_1e_hierarchy_synthesis(self):
-        # Verify 1e merges widely separated duplicate reports and builds per-crew hierarchy
+    def test_crew_attribution_and_1g_hierarchy_synthesis(self):
+        # Verify the hierarchy preserves distinct investigated lifecycle stages and crew tracks.
         (self.mission.web_dir / "PAO.csv").write_text(
             "2026-04-01T17:10:34Z|Victor Glover just had a good suit leak check.\n"
             "2026-04-01T17:45:00Z|Earlier Victor Glover completed his suit leak check.\n"
@@ -695,13 +796,14 @@ class TranscriptEnrichmentTest(unittest.TestCase):
             },
         ]
         self.run_cli(rows, "--test-batches", "1")
-        tree = phase_1e.build_mission_activity_hierarchy(self.mission)
-        # Two leak-check reports 35 min apart merge into 1 milestone with progression ['started', 'completed']
+        self.prepare_investigated_inputs()
+        tree = phase_1g.build_mission_activity_hierarchy(self.mission)
+        # Stage identity comes from investigation, not a fuzzy title merge.
         self.assertEqual(tree["summary"]["raw_milestone_detections"], 3)
-        self.assertEqual(tree["summary"]["merged_unique_milestones"], 2)
+        self.assertEqual(tree["summary"]["merged_unique_milestones"], 3)
         merged_leak = next(m for m in tree["merged_milestones"] if "leak check" in m["title"].lower())
-        self.assertEqual(merged_leak["status"], "completed")
-        self.assertEqual(merged_leak["status_progression"], ["started", "completed"])
+        self.assertEqual(merged_leak["status"], "started")
+        self.assertEqual(merged_leak["status_progression"], ["started"])
         self.assertEqual(merged_leak["crew"], ["glover"])
         self.assertGreater(tree["crew_timelines"]["glover"]["activity_count"], 0)
         self.assertGreater(tree["crew_timelines"]["koch"]["activity_count"], 0)

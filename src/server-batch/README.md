@@ -163,9 +163,23 @@ uv run run_all.py --mission artemis-ii --step photos-refresh
 # Re-scrape the IO photo catalog and EXIF timezone overrides, then rebuild the
 # ledger and web output.  Run when IO adds new records or corrects timestamps.
 uv run run_all.py --mission artemis-ii --step io-refresh
+
+# After 1d finishes (even with rejected rows): recover, investigate, build hierarchy.
+uv run run_all.py --mission artemis-ii --step comm-history --hide-reasoning
 ```
 
 `--list` shows all available groups alongside individual steps.
+
+Communications history now runs **1d → 1e (recovery) → 1f (source investigation)
+→ 1g (hierarchy)**. The `comm-history` group starts at 1e, preserving completed
+1d work. Use `--source-run RUN_ID` to recover a specific diagnostics run. All
+enriched/history outputs live under `processed/transcripts`, including the
+enriched CSVs; publication into `web/` is separate. See the
+[communications pipeline](1_comm/README.md#post-enrichment-history-pipeline-1e--1f--1g)
+for artifacts, resumption, investigation sources and limited trial runs.
+To start recovery alongside an active 1d, select only `--step 1e` and add
+`--follow --source-run RUN_ID`. Recovery uses completed batches and separate
+output files; downstream investigation/hierarchy still wait for completion.
 
 ## Running an individual script directly
 
