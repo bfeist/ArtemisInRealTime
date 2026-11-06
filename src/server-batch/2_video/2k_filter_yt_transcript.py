@@ -17,8 +17,8 @@ what steps 1b/1c capture separately).  The integrated timeline should show:
   • Only the YouTube-unique utterances (public affairs commentary, host
     narration, etc.).  Comm duplicates are removed.
 
-The result is written to web/PAO.csv (public affairs commentary only).
-The comm channel is unchanged in web/comm.csv (produced by step 1c).
+The result is written to processed/transcripts/inputs/PAO.csv (public affairs commentary only).
+The comm channel is unchanged in processed/transcripts/inputs/comm.csv (produced by step 1c).
 
 ─── Stream start auto-detection ─────────────────────────────────────────────
 The YouTube stream has no inherent UTC clock — WhisperX produces only
@@ -58,7 +58,7 @@ Pass 2 — speaker cluster promotion (only when diarization was run):
   "low_confidence": true in _dedup_matches.json so the operator can review them.
 
 ─── Outputs ──────────────────────────────────────────────────────────────────
-{web_dir}/PAO.csv                                — YT-unique PAO commentary (web)
+{processed_transcripts}/inputs/PAO.csv                                — YT-unique PAO commentary (processing)
 {processed_transcripts}/yt/_stream_start.json    — stream start UTC + anchors
 {processed_transcripts}/yt/_dedup_matches.json   — match evidence for audit
 {processed_transcripts}/yt/_comm_speakers.json   — identified comm speaker IDs
@@ -665,7 +665,7 @@ def main() -> None:
         sys.exit(1)
 
     chunk_seconds = int(args.chunk_hours * 3600)
-    comm_csv      = mission.web_dir / "comm.csv"
+    comm_csv      = mission.transcript_input("comm.csv")
 
     print(f"\n=== Step 2k: Filter YouTube Transcript — {mission.name} ===\n")
     print(f"  Mission        : {mission.name}")
@@ -859,7 +859,7 @@ def main() -> None:
 
     # ── PAO web output ────────────────────────────────────────────────────────
     pao       = build_pao_transcript(utterances)
-    out_path  = mission.web_dir / "PAO.csv"
+    out_path  = mission.transcript_inputs / "PAO.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as fh:
         for entry in pao:

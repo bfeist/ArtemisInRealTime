@@ -93,7 +93,7 @@ class PcdCommTests(unittest.TestCase):
         self.assertFalse((self.mission.web_dir / "comm").exists())
         self.assertTrue((self.mission.comm_audio_cache / "pcd/art002a000005.m4a").is_file())
         web.build_web_comm(self.mission)
-        row = (self.mission.web_dir / "comm.csv").read_text(encoding="utf-8").strip().split("|")
+        row = (self.mission.transcript_inputs / "comm.csv").read_text(encoding="utf-8").strip().split("|")
         self.assertEqual(row, ["2026-04-06T20:03:55.301000Z", "3.5", "2.5", "pcd/art002a000005.m4a", "[Koch] Thank you."])
         sources = json.loads((self.mission.web_dir / "comm_sources.json").read_text())
         self.assertEqual(sources[row[3]]["source_kind"], "crew_onboard")
@@ -125,7 +125,7 @@ class PcdCommTests(unittest.TestCase):
         with patch("shared.pds_comm._duration", return_value=10), patch("shared.pds_comm._web_audio", side_effect=media):
             import_pcd(self.mission)
         web.build_web_comm(self.mission)
-        before_csv = (self.mission.web_dir / "comm.csv").read_bytes()
+        before_csv = (self.mission.transcript_inputs / "comm.csv").read_bytes()
         transcript = self.mission.processed_transcripts / "comm/pcd/art002a000005.json"
         previous = json.loads(transcript.read_text())
         del previous["audio_encoding"]
@@ -138,7 +138,7 @@ class PcdCommTests(unittest.TestCase):
         upgraded = json.loads(transcript.read_text())
         self.assertEqual(upgraded.pop("audio_encoding"), AAC_PROFILE)
         self.assertEqual(upgraded, previous)
-        self.assertEqual((self.mission.web_dir / "comm.csv").read_bytes(), before_csv)
+        self.assertEqual((self.mission.transcript_inputs / "comm.csv").read_bytes(), before_csv)
 
     def test_import_also_upgrades_audio_profile_without_retranscribing(self):
         self.catalogs()
@@ -179,7 +179,7 @@ class PcdCommTests(unittest.TestCase):
             self.mission.comm_audio_cache.mkdir(parents=True, exist_ok=True)
             (self.mission.comm_audio_cache / f"{i}.aac").write_bytes(b"audio")
         web.build_web_comm(self.mission)
-        rows = (self.mission.web_dir / "comm.csv").read_text().splitlines()
+        rows = (self.mission.transcript_inputs / "comm.csv").read_text().splitlines()
         self.assertTrue(rows[0].endswith("|0"))
         self.assertTrue(rows[1].endswith("|1"))
         entries = json.loads((self.mission.web_dir / "comm.json").read_text())

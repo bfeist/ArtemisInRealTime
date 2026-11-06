@@ -478,8 +478,9 @@ def run_investigations(mission, args, client=None) -> dict:
         original = enrich.load_all_utterances(mission)
         if {r["uid"] for r in records} != {u["uid"] for u in original}:
             raise RuntimeError("Transcripts changed since 1e; rerun recovery before investigation")
-        source_paths = [mission.web_dir / name for name in
-                        ("comm.csv", "PAO.csv", "photos.json", "itinerary.json", "videoYt.json", "videoPDS.json")]
+        source_paths = [mission.transcript_input(name) for name in ("comm.csv", "PAO.csv")]
+        source_paths += [mission.web_dir / name for name in
+                        ("photos.json", "itinerary.json", "videoYt.json", "videoPDS.json")]
         source_paths += [Path(p) for p in args.reference_jsonl]
         source_paths += [Path(__file__).with_name("mission_context.py")]
         pdfs = reference_pdfs()

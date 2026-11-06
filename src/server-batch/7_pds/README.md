@@ -112,7 +112,7 @@ in `processed/transcripts/comm/pcd`; playback AAC/M4A files are cached in
 dated comm profile (mono AAC, 22,050 Hz, 64 kbps), in indexed M4A containers.
 Both `1b3` and routine `1c` builds upgrade older playback encodes without
 re-transcribing, and cache the encoding profile for resumable reruns. Step `1c` includes
-these in `web/comm.csv` with its existing five columns, using `pcd/{NASAID}.m4a`
+these in `processed/transcripts/inputs/comm.csv` with its existing five columns, using `pcd/{NASAID}.m4a`
 as the source and including speaker labels in text. `web/comm_sources.json`
 provides channel, time source, transcript origin, checksums and PDS provenance.
 The app uses `web/comm.json` with an optional `speaker` field and clean utterance

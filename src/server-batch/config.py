@@ -254,6 +254,15 @@ class MissionConfig:
         return self.data_dir / "processed" / "transcripts"
 
     @property
+    def transcript_inputs(self) -> Path:
+        return self.processed_transcripts / "inputs"
+
+    def transcript_input(self, filename: str) -> Path:
+        """Prefer processing inputs; read legacy web CSVs until rebuilt."""
+        path = self.transcript_inputs / filename
+        return path if path.exists() else self.web_dir / filename
+
+    @property
     def transcript_enrichment(self) -> Path:
         return self.processed_transcripts / "1d_enrichment"
 

@@ -66,8 +66,9 @@ def recovery_plan(mission, source_run: str | None = None, follow: bool = False):
     if not finished and not follow:
         raise RuntimeError("The selected 1d run is still running or was interrupted; finish it before 1e")
     ledger_path = mission.transcript_enrichment / "enriched_utterances.jsonl"
-    stable_paths = [mission.web_dir / name for name in
-                    ("comm.csv", "PAO.csv", "itinerary.json", "photos.json", "videoYt.json", "videoPDS.json")]
+    stable_paths = [mission.transcript_input(name) for name in ("comm.csv", "PAO.csv")]
+    stable_paths += [mission.web_dir / name for name in
+                    ("itinerary.json", "photos.json", "videoYt.json", "videoPDS.json")]
     stable_paths += [run_dir / "run.json", Path(__file__).with_name("mission_context.py")]
     paths = stable_paths.copy()
     # During a live run the ledger and diagnostics are append-only queues, not immutable inputs.

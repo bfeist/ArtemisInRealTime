@@ -174,7 +174,7 @@ class WebTimelineTest(unittest.TestCase):
     def test_runner_includes_publication_after_hierarchy(self):
         steps = [item[0] for item in runner.STEPS]
         self.assertEqual(steps[steps.index("1g") + 1], "1h")
-        self.assertEqual(runner.STEP_GROUPS["comm-history"], ["1e", "1f", "1g", "1h"])
+        self.assertEqual(runner.STEP_GROUPS["comm-history"], ["1e", "1f", "1g", "1h", "1i"])
 
 
 if __name__ == "__main__":

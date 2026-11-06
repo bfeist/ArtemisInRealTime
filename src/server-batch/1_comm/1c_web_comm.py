@@ -13,7 +13,7 @@ Output columns: t|s|d|src|text
   text — transcript text
 
 Input:  {data_dir}/{mission}/processed/transcripts/comm/{date}/*.json
-Output: {data_dir}/{mission}/web/comm.csv
+Output: {data_dir}/{mission}/processed/transcripts/inputs/comm.csv
         {data_dir}/{mission}/web/comm.json (optional speaker per utterance)
 """
 
@@ -148,7 +148,7 @@ def build_web_comm(mission: MissionConfig) -> None:
     audio_manifest = prepare_comm_audio(mission, transcripts)
 
     # Write pipe-delimited comm.csv
-    out_path = mission.web_dir / "comm.csv"
+    out_path = mission.transcript_inputs / "comm.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.name + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:

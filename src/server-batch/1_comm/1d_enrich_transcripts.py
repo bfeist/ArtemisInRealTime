@@ -1,6 +1,6 @@
 """Step 1d — Enrich transcripts and discover granular mission milestones.
 
-Merges space-to-ground comm (web/comm.csv) and public affairs commentary (web/PAO.csv)
+Merges space-to-ground comm and public affairs commentary from processed/transcripts/inputs/
 chronologically, groups them into context windows alongside mission itinerary events
 (web/itinerary.json), and streams assessments from LLM-Alpha-512K (GLM-5.3-Flash) via
 HGX_URL, or qwen3.8-flash-next via a local Strata instance (--backend strata).
@@ -85,11 +85,11 @@ def parse_utc_ts(utc_str: str) -> float:
 
 
 def load_all_utterances(mission: MissionConfig) -> list[dict]:
-    """Load, deduplicate, and merge web/comm.csv and web/PAO.csv sorted chronologically."""
+    """Merge processing CSVs chronologically, with legacy web/ input fallback."""
     utterances: list[dict] = []
     seen_uids: set[str] = set()
 
-    comm_path = mission.web_dir / "comm.csv"
+    comm_path = mission.transcript_input("comm.csv")
     if comm_path.exists():
         with open(comm_path, encoding="utf-8") as fh:
             for line in fh:
@@ -118,7 +118,7 @@ def load_all_utterances(mission: MissionConfig) -> list[dict]:
                     "text": text,
                 })
 
-    pao_path = mission.web_dir / "PAO.csv"
+    pao_path = mission.transcript_input("PAO.csv")
     if pao_path.exists():
         with open(pao_path, encoding="utf-8") as fh:
             for line in fh:

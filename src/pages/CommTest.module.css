@@ -84,6 +84,25 @@
   outline-offset: 2px;
 }
 
+.categoryActive {
+  background: #24243d;
+  border-color: #8585c9;
+  color: #d2d2ff;
+}
+
+.categoryInactive {
+  background: #111111;
+  border-color: #45455d;
+  color: #888899;
+}
+
+.categoryBadge {
+  display: inline-block;
+  margin-right: 0.6rem;
+  color: #aaaacc;
+  font-size: 0.7rem;
+}
+
 /* OE-1 — blue */
 .toggleOE1Active {
   background: #1a3a5c;
@@ -129,9 +148,16 @@
 /* ── transcript list ─────────────────────────────────────────── */
 
 .list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  overflow-anchor: none;
+}
+
+.dateSelect {
+  padding: 0.35rem 0.5rem;
+  background: #1e1e1e;
+  border: 1px solid #45455d;
+  border-radius: 4px;
+  color: #e8e8e8;
+  font: inherit;
 }
 
 .entry {
@@ -305,11 +331,8 @@
 
 /* ── day sections ─────────────────────────────────────────────── */
 
-.fdSection {
-  margin-bottom: 1rem;
-}
-
 .fdHeading {
+  background: #111111;
   font-size: 1rem;
   margin: 0 0 0;
   padding: 0.4rem 0.5rem 0.3rem;

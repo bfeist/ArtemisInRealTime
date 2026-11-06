@@ -267,6 +267,7 @@ uv run run_all.py --mission artemis-ii --list
 | 1b   | Transcribe comm audio (WhisperX) | artemis-ii |
 | 1c   | Produce web-ready comm JSON      | artemis-ii |
 | 1h   | Publish compact mission timeline after 1g | artemis-ii |
+| 1i   | Publish enriched comm/PAO transcripts and categories without model requests | artemis-ii |
 
 ### Video
 

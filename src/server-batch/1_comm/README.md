@@ -72,7 +72,7 @@ Each output JSON contains:
 |                |                                        |
 | -------------- | -------------------------------------- |
 | **Input**      | `processed/transcripts/comm/**/*.json` |
-| **Output**     | `web/comm.json`, `web/comm.csv`, `web/comm_sources.json` |
+| **Output**     | `web/comm.json`, `processed/transcripts/inputs/comm.csv`, `web/comm_sources.json` |
 | **Idempotent** | Yes — overwrites output each run       |
 
 Audio producers (`1b`, standalone `1b2`, `1b3`, and `1b4`) prepare playback
@@ -123,7 +123,7 @@ for downstream enrichment and PAO matching; it does not gain a new column.
 Imports verified PDS `data_audio_pcd` recordings into the same comm flow,
 preferring edited `data_transcripts_pcd` CSV/SRT over WhisperX. Run `7f` first
 to build the PDS catalogs, then `run_all.py --mission artemis-ii --step pcd-comm`
-to import PCD and rebuild `web/comm.csv`. The normal all-steps comm run also
+to import PCD and rebuild `processed/transcripts/inputs/comm.csv`. The normal all-steps comm run also
 includes `1b3`; PDS archive retrieval remains explicit.
 
 JSONs under `processed/transcripts/comm/pcd` retain NASA ID, speakers, exact
@@ -177,13 +177,44 @@ utterance identities; its append-only ledger retains historical assessments.
 
 ## Dependencies
 
+The plain `comm.csv` and `PAO.csv` are still required as interim inputs for
+deduplication, enrichment, and history recovery. Steps 1c and 2k now write them
+to `processed/transcripts/inputs/`. Batch readers prefer that directory and fall
+back to older copies in `web/`. Keep legacy web copies while completed history
+manifests still reference their checksums; there is no need to rerun the models
+just to display the existing analysis.
+
+### Enriched transcript publication (`1i_web_transcripts.py`)
+
+Run `uv run run_all.py --mission artemis-ii --step 1i` to publish the current
+analysis to `web/transcripts.json`. This step makes no model requests. It reads
+the same assessments behind `comm_enriched.csv` and `PAO_enriched.csv`, preferring
+the validated 1f investigation, then 1e recovery, then the 1d ledger. A present
+but invalid stage fails publication instead of silently using older labels.
+The `comm-history` group includes 1i after the timeline publication step.
+
+The Comm Test page reads this asset and offers category buttons with counts,
+combined with its channel filters. Comm and PAO have independent category
+selections and counts; rows without an assessment remain visible as
+Uncategorized. The transcript list renders only rows near the viewport,
+retains date headings, and provides a date jump selector. Playback offsets,
+durations, audio paths, and separate speaker labels are preserved. Transcript
+text comes from the source inputs, avoiding the character substitutions used
+in some processing CSV projections. Model diagnostics stay in processing.
+
+For fresh inputs, run 1c and 2k before 1d, then 1i after enrichment (or run the
+post-enrichment `comm-history` group for reviewed results). Enriched CSVs stay
+under their processing stage directories; the web page no longer needs CSV
+exports once `transcripts.json` is available. Older installations can still
+display plain `comm.json` and `PAO.csv` until the publication step is run.
+
 Radio comm follows **1a → 1b → 1c**. The optional crew PCD branch follows
 **7f → 1b3 → 1c**. Corrected mission loops follow **7f → 1b4 → 1c** and
 supersede overlapping AI radio utterances before enrichment.
 
 ### 1d: Transcript enrichment and milestone discovery (`1d_enrich_transcripts.py`)
 
-Merges `web/comm.csv` and `web/PAO.csv` chronologically, scores and categorizes
+Merges `processed/transcripts/inputs/comm.csv` and `processed/transcripts/inputs/PAO.csv` chronologically, scores and categorizes
 each utterance, and extracts granular mission developments from the transcript.
 Nearby itinerary, flight-plan, science, photo, and video references provide
 context; they do not define which milestones may be discovered.
@@ -385,7 +416,7 @@ with rejected rows. Step 1e also supports `--follow` while 1d is active (below).
 The former `1e_mission_context.py` is now `1g_mission_context.py`.
 The new stages never append to or rewrite 1d's original ledger. All generated
 artifacts stay in `processed/transcripts`; no stage publishes into `web/`.
-The original `web/comm.csv`, `web/PAO.csv` and media catalogs remain read-only
+The original `processed/transcripts/inputs/comm.csv`, `processed/transcripts/inputs/PAO.csv` and media catalogs remain read-only
 source inputs. Steps 1e and 1f read the original ledger and diagnostics directly.
 
 From the repository root, after 1d finishes:

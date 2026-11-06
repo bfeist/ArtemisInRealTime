@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadComm, parseCommCsv } from "../data/comm.ts";
+import { loadComm, loadEnrichedTranscripts, parseCommCsv } from "../data/comm.ts";
 import { transcriptLabel } from "../types/transcripts.ts";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -37,6 +37,39 @@ describe("web comm formats", () => {
     const fetch = vi.fn().mockResolvedValue(new Response("", { status: 500 }));
     vi.stubGlobal("fetch", fetch);
     await expect(loadComm("/mission/web")).rejects.toThrow("comm.json HTTP 500");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("enriched transcripts", () => {
+  it("loads assessments and playback metadata in one request", async () => {
+    const transcripts = {
+      comm: [{ t: "2026-04-01T18:00:00Z", s: 3, d: 2, category: "science", text: "A | B" }],
+      pao: [{ t: "2026-04-01T18:01:00Z", category: "pao_commentary", text: "Commentary" }],
+    };
+    const fetch = vi.fn().mockResolvedValue(Response.json(transcripts));
+    vi.stubGlobal("fetch", fetch);
+    expect(await loadEnrichedTranscripts("/web")).toEqual(transcripts);
+    expect(fetch).toHaveBeenCalledExactlyOnceWith("/web/transcripts.json");
+  });
+
+  it("supports legacy installations with optional PAO and literal pipes", async () => {
+    const fetch = vi.fn(async (url: string) => {
+      if (url.endsWith("comm.json")) return Response.json([]);
+      if (url.endsWith("PAO.csv")) return new Response("2026-04-01T18:00:00Z|A | B\r\n");
+      return new Response("", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    expect(await loadEnrichedTranscripts("/web")).toEqual({
+      comm: [],
+      pao: [{ t: "2026-04-01T18:00:00Z", text: "A | B" }],
+    });
+  });
+
+  it("does not silently fall back when enriched publication fails", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response("", { status: 500 }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(loadEnrichedTranscripts("/web")).rejects.toThrow("transcripts.json HTTP 500");
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

@@ -39,7 +39,7 @@ STEP_GROUPS: dict[str, list[str]] = {
     "pds-refresh": ["7a", "7b", "7c", "7d", "7e", "7f", "1b3", "1b4", "1c", "4a", "4b", "4c", "4d", "4e", "7g"],
     "pcd-comm": ["1b3", "1c"],
     "loops-comm": ["1b4", "1c"],
-    "comm-history": ["1e", "1f", "1g", "1h"],
+    "comm-history": ["1e", "1f", "1g", "1h", "1i"],
     # Re-check all external photo sources for new arrivals, download them,
     # and rebuild the ledger + web tiers + photos.json.
     # All download steps are idempotent — safe to re-run at any time.
@@ -62,6 +62,7 @@ STEPS = [
     ("1f", "1_comm.1f_investigate_history", "Investigate history claims and missing events against sources", {"artemis-ii"}),
     ("1g", "1_comm.1g_mission_context", "Build hierarchy from investigated mission history", {"artemis-ii"}),
     ("1h", "1_comm.1h_web_timeline", "Publish mission timeline and optional crew tracks", {"artemis-ii"}),
+    ("1i", "1_comm.1i_web_transcripts", "Publish enriched comm and PAO transcripts", {"artemis-ii"}),
     ("2a", "2_video.2a_ia_video_discover", "Discover IA video items", None),
     ("2b", "2_video.2b_ia_video_download", "Download IA video MP4s", None),
     ("2d", "2_video.2d_yt_metadata", "Fetch YouTube metadata", None),
