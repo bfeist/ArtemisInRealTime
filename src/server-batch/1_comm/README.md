@@ -378,7 +378,7 @@ stops. Ctrl+C still interrupts immediately. Rerunning 1d processes pending
 targets; use `--force` to deliberately replace already valid cached assessments.
 Filler labels may have empty tags when there is no substantive topic.
 
-### Post-enrichment history pipeline: 1e → 1f → 1g
+### Post-enrichment history pipeline: 1e → 1f → 1g → 1h
 
 These steps normally run **after 1d finishes**, including a 1d run that finished
 with rejected rows. Step 1e also supports `--follow` while 1d is active (below).
@@ -394,7 +394,7 @@ From the repository root, after 1d finishes:
 uv run --project src/server-batch python src/server-batch/run_all.py --mission artemis-ii --step comm-history --source-run RUN_ID --hide-reasoning
 ```
 
-`comm-history` expands to **1e, 1f, 1g**, without rerunning 1d. Omit
+`comm-history` expands to **1e, 1f, 1g, 1h**, without rerunning 1d. Omit
 `--source-run` to select the latest diagnostics directory. Prefer the explicit
 ID when recovering a particular forced run. Without `--follow`, an
 interrupted/running run is rejected; every batch number must be present.
@@ -630,6 +630,75 @@ Before writing, 1g verifies unique coverage of every reviewed utterance and
 milestone, day containment, and source-specific crew attribution. The outputs
 include `schema_version=2` and the exact 1f artifact hashes for lineage. The
 summary counts mission flight days separately from prelaunch date groups.
+
+#### 1h: Web timeline (`1h_web_timeline.py`)
+
+Publishes the version 2 hierarchy as presentation-only static JSON. It makes no
+LLM requests. Existing `comm.json` and audio assets supply transcripts/playback;
+the timeline export includes no transcript text, evidence quotes, investigation
+claims, source utterance IDs or assessment metadata.
+
+```powershell
+# Publish an existing completed 1g hierarchy without rerunning earlier stages:
+uv run run_all.py --mission artemis-ii --step 1h
+# Rebuild hierarchy and publish:
+uv run run_all.py --mission artemis-ii --step 1g 1h
+```
+
+The export has five files: one complete mission timeline and one optional track
+per crew member. The main file is intended to load once into mission/global
+state alongside the existing comm and photo data. Zooming, selecting blocks and
+expanding activities all use that in-memory document.
+
+| Asset | Load when | Contents |
+| --- | --- | --- |
+| `web/timeline.json` | Opening the mission | All days, blocks, sub-blocks and milestones, plus crew metadata and track references |
+| `web/timeline/crew/{hash}.json` | Enabling a person's track | That person's complete mission activity track with block/day context |
+
+Milestones live once in `milestones`, keyed by ID. Sub-blocks use `milestone_ids`
+and planned blocks use `constituent_milestone_ids` to reference that lookup.
+Crew entries also refer to those same milestone IDs. This avoids repeating
+milestone objects in multiple hierarchy views. There is no per-block loading,
+byte cap or pagination.
+
+For the current Artemis II hierarchy (about 96 MB), `timeline.json` is about
+5.8 MB of minified JSON / 1.2 MB gzipped. Each optional crew track is about
+2.6-2.9 MB. Track references include `path` relative to the mission web root,
+`bytes`, and a `gzip_bytes` transfer estimate. Configure HTTP gzip/Brotli on the
+asset host for compressed transfers; the files are ordinary UTF-8 JSON.
+
+The shared TypeScript types live in `src/types/missionTimeline.ts`. The loaders
+in `src/data/missionTimeline.ts` follow the existing comm loader's pattern:
+
+```typescript
+// Load the full timeline once and retain it in mission/global state:
+const timeline = await loadMissionTimeline(missionWebBase);
+const block = timeline.flight_days[0].blocks[0];
+const activities = block.sub_blocks;
+const milestone = timeline.milestones[activities[0].milestone_ids[0]];
+// On enabling a crew track, load it once and retain it in application state:
+const koch = await loadCrewTimeline(missionWebBase, timeline.crew.koch.timeline);
+```
+
+Times retain 1g's meaning: block bounds are display windows; planned times are
+separate from confirmed constituent times. Milestones and crew entries retain
+`time_basis` and report times, so a later recap is not presented as execution at
+the time of the recording. Unknown crew, reference-only activities and
+unconfirmed plans retain their existing designations. Sub-block IDs are scoped
+to their containing block.
+
+Step 1h verifies the hierarchy's exact investigation lineage, its completed 1f
+and 1e manifests and artifact hashes, and coverage before publication.
+Content-addressed crew assets are written before atomically replacing
+`timeline.json`; failures preserve the previous timeline. Upload crew assets
+first and the main file last. Revalidate the main file on the host; crew URLs
+can use long-lived immutable caching. Old crew assets remain available for
+sessions still using an earlier timeline.
+
+Size metrics and the input hierarchy hash are saved to
+`processed/transcripts/1h_web_timeline/publication_report.json`. Routine generic
+asset refreshes do not rerun the history/LLM pipeline; publish explicitly with
+1h after updating the hierarchy, or use `comm-history` for the whole history flow.
 
 ## How to Run
 

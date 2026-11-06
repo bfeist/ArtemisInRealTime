@@ -270,6 +270,10 @@ class MissionConfig:
         return self.processed_transcripts / "1g_hierarchy"
 
     @property
+    def transcript_web_timeline(self) -> Path:
+        return self.processed_transcripts / "1h_web_timeline"
+
+    @property
     def comm_audio_cache(self) -> Path:
         """Prepared playback audio; step 1c publishes only referenced recordings."""
         return self.data_dir / "processed" / "comm_audio"
@@ -324,6 +328,7 @@ class MissionConfig:
             self.transcript_recovery,
             self.transcript_investigation,
             self.transcript_hierarchy,
+            self.transcript_web_timeline,
             self.io_cache,
             self.web_dir,
             self.yt_video_dir,
