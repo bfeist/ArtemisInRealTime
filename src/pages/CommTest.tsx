@@ -478,6 +478,25 @@ function CommTest(): JSX.Element {
                 const row = merged[index];
                 if (row.kind === "pao") {
                   const playback = row.entry.playback;
+                  const audio = playback?.audio;
+                  const isActive =
+                    activeEntry?.source === "PAO" &&
+                    activeEntry.t === row.entry.t &&
+                    activeEntry.text === row.entry.text;
+                  const selectPao = () => {
+                    if (!audio) return;
+                    setActiveEntry(
+                      isActive
+                        ? null
+                        : {
+                            ...row.entry,
+                            source: "PAO",
+                            src: audio.src.slice(5),
+                            s: audio.s,
+                            d: audio.d,
+                          }
+                    );
+                  };
                   const videoLinks = playback?.video
                     ? [
                         {
@@ -493,11 +512,11 @@ function CommTest(): JSX.Element {
                           key: mapping.id,
                         })
                       );
-                  return (
-                    <div className={styles.entryPao}>
-                      <div className={styles.time}>{formatTime(row.entry.t)}</div>
-                      <div className={`${styles.channel} ${styles.channelPao}`}>PAO</div>
-                      <div className={styles.text}>
+                  const content = (
+                    <>
+                      <span className={styles.time}>{formatTime(row.entry.t)}</span>
+                      <span className={`${styles.channel} ${styles.channelPao}`}>PAO</span>
+                      <span className={styles.text}>
                         <span className={styles.categoryBadge}>
                           {categoryLabel(row.entry.category || "uncategorized")}
                         </span>
@@ -507,35 +526,38 @@ function CommTest(): JSX.Element {
                           </span>
                         )}
                         {row.entry.text}
-                        {playback?.audio && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const audio = playback.audio;
-                              setActiveEntry({
-                                ...row.entry,
-                                source: "PAO",
-                                src: audio.src.slice(5),
-                                s: audio.s,
-                                d: audio.d,
-                              });
-                            }}
-                          >
-                            Listen
-                          </button>
-                        )}
-                        {videoLinks.map(({ id, seconds, key }) => (
-                          <a
-                            key={key}
-                            href={`https://www.youtube.com/watch?v=${id}&t=${Math.floor(seconds)}s`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {" "}
-                            Watch video
-                          </a>
-                        ))}
-                      </div>
+                      </span>
+                    </>
+                  );
+                  return (
+                    <div>
+                      {audio ? (
+                        <button
+                          type="button"
+                          onClick={selectPao}
+                          aria-pressed={isActive}
+                          className={`${styles.entry} ${styles.entryPao}${isActive ? ` ${styles.entryActive}` : ""}`}
+                        >
+                          {content}
+                        </button>
+                      ) : (
+                        <div className={styles.entryPao}>{content}</div>
+                      )}
+                      {videoLinks.length > 0 && (
+                        <div className={styles.paoLinks}>
+                          {videoLinks.map(({ id, seconds, key }) => (
+                            <a
+                              key={key}
+                              href={`https://www.youtube.com/watch?v=${id}&t=${Math.floor(seconds)}s`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {" "}
+                              Watch video
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 }

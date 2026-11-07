@@ -73,7 +73,9 @@ describe("comm test category filters", () => {
       ],
     });
     const { container } = renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Listen" }));
+    const row = await screen.findByRole("button", { name: /Reviewed commentary/ });
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-pressed", "true");
     const audio = container.querySelector("audio");
     expect(audio).toHaveAttribute("src", "/assets/releases/baseline/comm/pao/recording.m4a");
     fireEvent.loadedMetadata(audio);
@@ -85,6 +87,9 @@ describe("comm test category filters", () => {
     audio.currentTime = 20.5;
     fireEvent.timeUpdate(audio);
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
+    fireEvent.click(row);
+    expect(container.querySelector("audio")).toBeNull();
+    expect(row).toHaveAttribute("aria-pressed", "false");
   });
 
   it("shares category selections across COMM and PAO, with All, None, and Only", async () => {

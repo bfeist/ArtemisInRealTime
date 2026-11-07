@@ -55,6 +55,10 @@ Step `1c` prepares private `inputs/comm.csv`, `comm.json`, source metadata and
 an audio manifest. It can upgrade cached PCD encodes, but does not publish,
 replace or retire web audio. `1i` stages a new immutable release; activation is
 separate. No retained release or shared video is deleted by this workflow.
+Optional stage `2r` prepares compact YouTube PAO audio from existing video parts
+and cached transcripts. Once prepared, `1i` reuses its exact utterance mappings
+and includes the referenced audio in web releases without rerunning ASR or
+assessments. See [PAO audio preparation](2_video/README.md#compact-youtube-pao-audio-2r).
 The generic media build does not create `web/audio`,
 `web/transcripts`, `audioPDS.json`, or `transcriptsPDS.json`. Same-drive IA MP4s
 use hard links; cross-drive PDS copies are verified

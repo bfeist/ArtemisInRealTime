@@ -2,6 +2,55 @@
 
 ## Current operations and PAO review gates
 
+### Compact YouTube PAO audio (2r)
+
+`2r_prepare_pao_audio.py` prepares PAO playback from the existing MP4 parts used
+by the saved `2j` transcripts. It uses the common COMM profile: AAC, 22,050 Hz,
+mono, 64 kbps, in M4A containers with front-loaded seeking indexes. This is a
+separate media preparation operation; it performs no ASR, duplicate filtering,
+classification, research, download, or upload.
+YouTube is the selected PAO playback source for its better source audio quality;
+the IA coverage tools below remain available for reconciliation and do not
+control 2r's audio selection.
+
+```powershell
+.venv/Scripts/python.exe 2_video/2r_prepare_pao_audio.py `
+  --mission artemis-ii --input-dir D:/chunks --workers 4 `
+  --dataset-manifest F:/_repos/ArtemisInRealTime_assets/artemis-ii/processed/transcripts/datasets/legacy-20261107-v3/manifest.json
+
+.venv/Scripts/python.exe 1_comm/1i_web_transcripts.py `
+  --mission artemis-ii `
+  --dataset-manifest F:/_repos/ArtemisInRealTime_assets/artemis-ii/processed/transcripts/datasets/legacy-20261107-v3/manifest.json
+```
+
+Use `--plan-only` to audit occurrence recovery before encoding. Without
+`--dataset-manifest`, 2r reads the current local web release. The equivalent
+runner command is `run_all.py --mission artemis-ii --step 2r --input-dir D:/chunks`
+(with the same optional dataset manifest). Normal routine builds do not encode.
+
+Every accepted PAO row must match exactly one cached occurrence by historical
+UTC and text. Repeated broadcasts stay separate. The old cumulative part clock
+is used solely to recover identity; playback uses each matching MP4's local
+segment start/end. This does not revise mission UTC or assert IA/video clock
+equivalence. Missing or ambiguous matches stop preparation with a coverage report.
+
+Prepared files and per-file receipts live in `processed/comm_audio/pao/`.
+Completed encodes are reused after checking source size/mtime, encoding profile,
+and output hashes; changed recipes get new filenames. Failed runs retain
+completed work. `processed/transcripts/pao_audio/manifest.json` is committed
+atomically only after every selected part is ready, with source transcript
+hashes, encoding receipts, and per-utterance offsets. The source media provenance
+records path/size/mtime; it does not claim a full source-video hash.
+
+`1i` automatically reuses that manifest, or accepts `--pao-audio-manifest`.
+It requires the same accepted PAO occurrences and hash-valid audio bytes,
+adds only playback metadata, and copies referenced M4As into the staged web
+release. Existing assessments and transcript text remain unchanged. Release
+activation and remote asset upload remain separate existing operations.
+Comm Test selects and highlights PAO rows using the same audio player as COMM.
+
+### IA coverage and video synchronization
+
 Video intake, distribution, PAO text authority, synchronization, and publication
 are separate operations. Routine publication reuses existing video IDs and cached
 text; it must not invoke `2e`, `2h`, `2i`, `2j`, or legacy `2k`. The diagrams and

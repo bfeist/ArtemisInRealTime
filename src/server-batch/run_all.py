@@ -71,6 +71,7 @@ STEPS = [
     # uv run 2_video/2i_yt_upload.py --input-dir "D:/chunks"
     ("2j", "2_video.2j_transcribe_yt",           "Transcribe YT chunks (WhisperX + diarization)", {"artemis-ii"}),
     ("2k", "2_video.2k_filter_yt_transcript",     "Filter YT transcript; produce combined web transcript", {"artemis-ii"}),
+    ("2r", "2_video.2r_prepare_pao_audio", "Prepare compact YouTube PAO playback audio (no ASR)", {"artemis-ii"}),
     ("3a", "3_photos.3a_ia_stills_download", "Download IA stills", None),
     ("3a2", "3_photos.3a2_io_photo_catalog", "Scrape IO photo collections", None),
     ("3a3", "3_photos.3a3_io_exif_scrape", "Scrape IO EXIF for timezone corrections", None),
@@ -126,9 +127,9 @@ def run_step(
     try:
         # Simulate --mission argument for the step
         sys.argv = ["run_all.py", "--mission", mission_slug]
-        if step_id == "2j":
+        if step_id in {"2j", "2r"}:
             sys.argv.extend(["--input-dir", input_dir])
-        if step_id == "1i" and dataset_manifest:
+        if step_id in {"1i", "2r"} and dataset_manifest:
             sys.argv.extend(["--dataset-manifest", dataset_manifest])
         if step_id in {"1d", "1e", "1f"}:
             sys.argv.extend(["--backend", backend])
@@ -192,7 +193,7 @@ def main():
     parser.add_argument("--history-limit", type=int, help="Limit pending work items per transcript model stage")
     parser.add_argument("--retry-unresolved", action="store_true", help="Retry exhausted 1f event investigations")
     parser.add_argument("--max-tokens", type=int, help="Override token ceiling for transcript model stages")
-    parser.add_argument("--input-dir", help="Required cached chunks for explicit 2j fallback ASR")
+    parser.add_argument("--input-dir", help="Existing MP4 chunks for explicit 2j transcription or 2r audio preparation")
     parser.add_argument("--dataset-manifest", help="Imported dataset for staged publication")
     parser.add_argument("--work-plan", help="Reviewed bounded model impact plan")
     args = parser.parse_args()
@@ -240,8 +241,8 @@ def main():
         steps_to_run = [s for sid in STEP_GROUPS["routine-build"] for s in STEPS if s[0] == sid]
 
     selected = {s[0] for s in steps_to_run}
-    if "2j" in selected and not args.input_dir:
-        parser.error("Explicit 2j fallback transcription requires --input-dir")
+    if {"2j", "2r"} & selected and not args.input_dir:
+        parser.error("Explicit 2j transcription / 2r audio preparation requires --input-dir")
     if selected & {"1d", "1e", "1f"} and (not args.work_plan or not args.history_limit):
         parser.error("Model work requires --work-plan and positive --history-limit")
 

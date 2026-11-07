@@ -16,11 +16,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import MISSIONS, MissionConfig
 from history_common import transcript, file_digest, read_jsonl, require_artifacts, stage_lock, write_csvs
 from shared.pds import atomic_json
+from shared.pao_audio import apply_pao_audio
 
 ASSESSMENT_FIELDS = ("importance", "category", "tags", "topic", "event_id", "statement_kinds")
 
 
-def publish_transcripts(mission: MissionConfig, *, dataset_manifest=None, release_id=None, activate=False, include_exports=False, sync_path=None, legacy_baseline=None) -> dict:
+def prepared_pao(mission, transcripts, manifest_path=None, receipts=None):
+    path = Path(manifest_path) if manifest_path else mission.processed_transcripts / "pao_audio/manifest.json"
+    if manifest_path or path.exists():
+        payload, audio_receipts, checksum = apply_pao_audio(transcripts, path)
+        return payload, audio_receipts, {"pao_audio_manifest_sha256": checksum}
+    return transcripts, receipts, {}
+
+
+def publish_transcripts(mission: MissionConfig, *, dataset_manifest=None, release_id=None, activate=False, include_exports=False, sync_path=None, legacy_baseline=None, pao_audio_manifest=None) -> dict:
     from shared.web_release import stage_release, activate_release
     if dataset_manifest:
         from transcript_dataset import read_dataset
@@ -32,12 +41,14 @@ def publish_transcripts(mission: MissionConfig, *, dataset_manifest=None, releas
         records = [{**assessments.get(mapping['uid'], {}), **originals[mapping['uid']],
                     **dataset['published_transcripts'][mapping['channel']][mapping['position']]}
                    for mapping in dataset['entry_mapping']] if include_exports else []
+        payload, receipts, pao_provenance = prepared_pao(mission, dataset["published_transcripts"],
+            pao_audio_manifest, dataset['manifest'].get('paoPolicy', {}).get('audioDerivatives', {}))
         destination, report = stage_release(
-            mission, dataset["published_transcripts"], release_id=release_id, sync_path=sync_path,
-            pao_audio_receipts=dataset['manifest'].get('paoPolicy', {}).get('audioDerivatives', {}),
+            mission, payload, release_id=release_id, sync_path=sync_path,
+            pao_audio_receipts=receipts,
             exports=(lambda target: write_csvs(target, records)) if include_exports else None,
             provenance={"dataset_manifest_sha256": file_digest(Path(dataset_manifest)),
-                        "dataset_contract": dataset["manifest"].get("contract")})
+                        "dataset_contract": dataset["manifest"].get("contract"), **pao_provenance})
         if activate:
             activate_release(mission, destination.name, legacy_baseline=legacy_baseline)
         return {**report, "release_path": str(destination), "activated": activate}
@@ -83,10 +94,12 @@ def publish_transcripts(mission: MissionConfig, *, dataset_manifest=None, releas
             raise RuntimeError("Transcript inputs changed during publication; rerun 1i")
         if require_artifacts(source) != manifest:
             raise RuntimeError("Assessments changed during publication; rerun 1i")
+        result, receipts, pao_provenance = prepared_pao(mission, result, pao_audio_manifest)
         destination, report = stage_release(
             mission, result, release_id=release_id,
+            pao_audio_receipts=receipts,
             exports=(lambda target: write_csvs(target, csv_records)) if include_exports else None,
-            sync_path=sync_path, provenance={"assessment_ledger_sha256": file_digest(ledger_path)})
+            sync_path=sync_path, provenance={"assessment_ledger_sha256": file_digest(ledger_path), **pao_provenance})
         report.update(source_stage=source.name, input_hashes=checksums,
                       comm_entries=len(result["comm"]), pao_entries=len(result["pao"]),
                       categorized_entries=assessed, release_path=str(destination), activated=activate)
@@ -105,13 +118,14 @@ def main():
     parser.add_argument("--activate-release", help="Verify and activate an existing release (also supports rollback)")
     parser.add_argument("--legacy-baseline", help="Preserved baseline release required for first activation over legacy assets")
     parser.add_argument("--include-exports", action="store_true")
+    parser.add_argument("--pao-audio-manifest", type=Path, help="Prepared 2r audio mappings; auto-reused when present")
     parser.add_argument("--sync-path", type=Path, help="Private verified audio-evidence mappings; projected against local part manifest")
     args = parser.parse_args()
     if args.activate_release:
         from shared.web_release import activate_release
         print(json.dumps(activate_release(MISSIONS[args.mission], args.activate_release, legacy_baseline=args.legacy_baseline), indent=2))
         return
-    print(json.dumps(publish_transcripts(MISSIONS[args.mission], dataset_manifest=args.dataset_manifest, release_id=args.release_id, activate=args.activate, include_exports=args.include_exports, sync_path=args.sync_path, legacy_baseline=args.legacy_baseline), indent=2))
+    print(json.dumps(publish_transcripts(MISSIONS[args.mission], dataset_manifest=args.dataset_manifest, release_id=args.release_id, activate=args.activate, include_exports=args.include_exports, sync_path=args.sync_path, legacy_baseline=args.legacy_baseline, pao_audio_manifest=args.pao_audio_manifest), indent=2))
 
 
 if __name__ == "__main__":
