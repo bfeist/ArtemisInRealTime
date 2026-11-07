@@ -38,7 +38,7 @@ drive, keeping existing F: copies in place. Public compressed IA/PDS video
 is prepared under F:'s `web/` with separate indexes. PDS audio and supplied
 transcript originals stay in D:'s `raw/pds`; comm imports cache playback under
 `processed/comm_audio`, with normalized transcripts under `processed/transcripts`.
-Step `1c` publishes the final `comm.csv`/`comm.json` and only the audio they
+Step `1c` prepares internal `inputs/comm.csv` and `inputs/comm.json` and publishes only the audio they
 reference under `web/comm`. After the indexes save successfully, it moves unused
 web audio back into the cache and records a reconciliation receipt in `processed/`.
 The routine build stage and all comm/PDS integration groups include this step.
@@ -170,8 +170,8 @@ uv run run_all.py --mission artemis-ii --step comm-history --hide-reasoning
 
 `--list` shows all available groups alongside individual steps.
 
-Communications history runs **1d (classification) ? 1e (discovery) ?
-1f (source verification) ? 1g (hierarchy) ? 1h (timeline) ? 1i (transcripts)**.
+Communications history runs **1d (classification) -> 1e (discovery) ->
+1f (source verification) -> 1g (hierarchy) -> 1h (timeline) -> 1i (transcripts)**.
 The `comm-history` group includes every stage and resumes validated work by
 default. Classification uses HGX, `LLM-Alpha-512K` (GLM-5.3-Flash), low reasoning
 and a constrained JSON schema. Event discovery and verification consume these
@@ -183,7 +183,9 @@ After source transcription/import, run from the repository root:
 uv run --directory src/server-batch run_all.py --mission artemis-ii --step 1c 2k comm-history --backend hgx --model LLM-Alpha-512K --reasoning-effort low
 ```
 
-Stages 1c and 2k prepare the source CSVs under `processed/transcripts/inputs`.
+Stages 1c and 2k prepare internal source transcripts under `processed/transcripts/inputs`.
+Stage 1i publishes enriched `transcripts.json`, `comm_enriched.csv` and
+`PAO_enriched.csv`; web views never fall back to plain transcript files.
 The ordinary all-steps run also prepares both inputs before classification.
 Processing outputs live under `1d_enrichment`, `1e_discovery`, `1f_investigation`,
 `1g_hierarchy`, `1h_web_timeline` and `1i_web_transcripts` in
@@ -208,7 +210,7 @@ uv run python -m 2_video.2e_yt_download        --mission artemis-ii
 uv run python -m 2_video.2g_web_video          --mission artemis-ii
 
 # Step 2h splits a downloaded MKV into 12-hour parts; step 2j transcribes them.
-# Step 2k auto-detects the stream start UTC by matching speech against comm.json,
+# Step 2k auto-detects the stream start UTC by matching speech against the internal comm.csv,
 # removes comm duplicates, and writes web/combined_transcript.json.
 uv run python -m 2_video.2h_split_mkv               --mission artemis-ii
 uv run python -m 2_video.2j_transcribe_yt           --mission artemis-ii \
@@ -220,7 +222,7 @@ uv run python -m 2_video.2k_filter_yt_transcript    --mission artemis-ii
 
 uv run python -m 1_comm.1a_download_ia_zips    --mission artemis-ii
 uv run python -m 1_comm.1b_transcribe          --mission artemis-ii
-uv run python -m 1_comm.1c_web_comm            --mission artemis-ii
+uv run python -m 1_comm.1c_prepare_comm            --mission artemis-ii
 
 uv run python -m 3_photos.3a_ia_stills_download  --mission artemis-ii
 uv run python -m 3_photos.3a2_io_photo_catalog   --mission artemis-ii
@@ -253,13 +255,13 @@ uv run run_all.py --mission artemis-ii --list
 | ---- | -------------------------------- | ---------- |
 | 1a   | Download comm audio ZIPs         | artemis-ii |
 | 1b   | Transcribe comm audio (WhisperX) | artemis-ii |
-| 1c   | Produce web-ready comm JSON      | artemis-ii |
+| 1c   | Prepare internal COMM transcripts and publish audio      | artemis-ii |
 | 1d   | Classify transcripts with constrained HGX schema | artemis-ii |
 | 1e   | Discover candidate events without changing labels | artemis-ii |
 | 1f   | Verify candidate events against original sources | artemis-ii |
 | 1g   | Build mission hierarchy from verified history | artemis-ii |
 | 1h   | Publish compact mission timeline after 1g | artemis-ii |
-| 1i   | Publish enriched comm/PAO transcripts and categories without model requests | artemis-ii |
+| 1i   | Publish enriched comm/PAO JSON and CSVs without model requests | artemis-ii |
 
 ### Video
 

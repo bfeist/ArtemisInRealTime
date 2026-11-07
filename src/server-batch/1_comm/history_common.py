@@ -137,7 +137,7 @@ def events_from_records(records: list[dict]) -> list[dict]:
 
 
 def write_csvs(root: Path, records: list[dict]) -> None:
-    """Processing artifacts only; explicit blanks preserve unassessed fallback values."""
+    """Project enriched rows to CSV; PAO has its own broadcast-type column."""
     def cell(value):
         return str(value if value is not None else "").replace("|", "/").replace("\n", " ").replace("\r", " ")
     for channel, filename in (("comm", "comm_enriched.csv"), ("pao", "PAO_enriched.csv")):
@@ -149,7 +149,10 @@ def write_csvs(root: Path, records: list[dict]) -> None:
             if channel == "comm":
                 values += [row.get(k, "") for k in ("s", "d", "src")]
             values += [row.get("importance"), row.get("category"), ", ".join(row.get("tags", [])),
-                       row.get("topic", ""), row.get("event_id", ""), row["text"]]
+                       row.get("topic", ""), row.get("event_id", "")]
+            if channel == "pao":
+                values.append(row.get("pao_type", ""))
+            values.append(row["text"])
             lines.append("|".join(cell(v) for v in values))
         path = root / filename
         tmp = path.with_suffix(".tmp")

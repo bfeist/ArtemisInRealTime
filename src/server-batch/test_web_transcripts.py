@@ -32,7 +32,7 @@ class WebTranscriptsTest(unittest.TestCase):
             "2026-04-01T18:01:00Z|Unassessed commentary\n", encoding="utf-8")
         # New processing inputs take precedence over stale legacy web files.
         (self.mission.web_dir / "comm.csv").write_text("invalid stale CSV\n")
-        common.atomic_json(self.mission.web_dir / "comm.json", [{
+        common.atomic_json(self.mission.transcript_inputs / "comm.json", [{
             "t": "2026-04-01T18:00:00Z", "s": 3, "d": 2, "src": "pcd/test.m4a",
             "speaker": "Koch", "text": "A | B",
         }])
@@ -54,6 +54,12 @@ class WebTranscriptsTest(unittest.TestCase):
         self.assertEqual(row["category"], "science")
         self.assertNotIn("model_provenance", row)
         self.assertNotIn("category", payload["pao"][0])
+        comm_csv = (self.mission.web_dir / "comm_enriched.csv").read_text(encoding="utf-8")
+        pao_csv = (self.mission.web_dir / "PAO_enriched.csv").read_text(encoding="utf-8")
+        self.assertIn("|4|science|moon|Observation|", comm_csv)
+        self.assertIn("[Koch] A / B", comm_csv)
+        self.assertIn("Unassessed commentary", pao_csv)
+        self.assertEqual(set(report["artifacts"]), {"transcripts.json", "comm_enriched.csv", "PAO_enriched.csv"})
 
     def test_canonical_labels_are_published(self):
         reviewed = {**self.record, "category": "systems"}
@@ -71,6 +77,19 @@ class WebTranscriptsTest(unittest.TestCase):
                          ("PCD", "systems", ["acknowledgment"]))
         self.assertNotIn("thread_context", row)
 
+    def test_pao_broadcast_type_is_published_separately_from_subject(self):
+        pao = {**self.utterances[1], "category": "mission_background", "importance": 2,
+               "tags": ["coverage"], "topic": "Mission coverage introduction", "pao_type": "filler"}
+        common.publish(self.mission.transcript_enrichment, [self.record, pao], [], {"complete": True})
+        web.publish_transcripts(self.mission)
+        result = self.read()
+        self.assertEqual(result["pao"][0]["category"], "mission_background")
+        self.assertEqual(result["pao"][0]["pao_type"], "filler")
+        self.assertNotIn("pao_type", result["comm"][0])
+        fields = (self.mission.web_dir / "PAO_enriched.csv").read_text(encoding="utf-8").strip().split("|")
+        self.assertEqual(fields[2], "mission_background")
+        self.assertEqual(fields[-2], "filler")
+
     def test_invalid_canonical_artifact_cannot_replace_existing_publication(self):
         web.publish_transcripts(self.mission)
         before = (self.mission.web_dir / "transcripts.json").read_bytes()
@@ -80,14 +99,13 @@ class WebTranscriptsTest(unittest.TestCase):
             web.publish_transcripts(self.mission)
         self.assertEqual((self.mission.web_dir / "transcripts.json").read_bytes(), before)
 
-    def test_legacy_web_inputs_still_load(self):
+    def test_plain_web_csvs_cannot_replace_missing_processing_inputs(self):
         for filename in ("comm.csv", "PAO.csv"):
-            legacy = self.mission.web_dir / filename
-            legacy.write_bytes((self.mission.transcript_inputs / filename).read_bytes())
+            (self.mission.web_dir / filename).write_bytes((self.mission.transcript_inputs / filename).read_bytes())
             (self.mission.transcript_inputs / filename).unlink()
-        web.publish_transcripts(self.mission)
-        self.assertEqual(len(self.read()["comm"]), 1)
-        self.assertEqual(len(self.read()["pao"]), 1)
+        with self.assertRaisesRegex(RuntimeError, "empty transcripts"):
+            web.publish_transcripts(self.mission)
+        self.assertFalse((self.mission.web_dir / "transcripts.json").exists())
 
 
 if __name__ == "__main__":

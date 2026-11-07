@@ -90,6 +90,13 @@ const CATEGORY_LABELS: Record<string, string> = {
   uncategorized: "Uncategorized",
 };
 
+const PAO_TYPE_LABELS: Record<string, string> = {
+  commentary: "PAO commentary",
+  filler: "PAO filler",
+  other: "Other PAO",
+  unspecified: "Unspecified type",
+};
+
 function categoryLabel(category: string): string {
   return CATEGORY_LABELS[category] ?? category.replaceAll("_", " ");
 }
@@ -116,6 +123,7 @@ function CommTest(): JSX.Element {
     unknown: true,
   });
   const [showPao, setShowPao] = useState(true);
+  const [hiddenPaoTypes, setHiddenPaoTypes] = useState<Set<string>>(new Set());
   const [hiddenCategories, setHiddenCategories] = useState<Record<Row["kind"], Set<string>>>({
     comm: new Set(),
     pao: new Set(),
@@ -185,6 +193,17 @@ function CommTest(): JSX.Element {
     [entries, paoEntries]
   );
 
+  const paoTypeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const entry of paoEntries) {
+      const type = entry.pao_type ?? "unspecified";
+      counts.set(type, (counts.get(type) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort(([a], [b]) =>
+      PAO_TYPE_LABELS[a].localeCompare(PAO_TYPE_LABELS[b])
+    );
+  }, [paoEntries]);
+
   // Sort and resolve channels once per dataset, rather than on every filter change.
   const chronological = useMemo(() => {
     const rows: Row[] = [
@@ -203,10 +222,12 @@ function CommTest(): JSX.Element {
     () =>
       chronological.filter(
         (row) =>
-          (row.kind === "comm" ? visible[row.channel] : showPao) &&
+          (row.kind === "comm"
+            ? visible[row.channel]
+            : showPao && !hiddenPaoTypes.has(row.entry.pao_type ?? "unspecified")) &&
           !hiddenCategories[row.kind].has(row.entry.category || "uncategorized")
       ),
-    [chronological, visible, showPao, hiddenCategories]
+    [chronological, visible, showPao, hiddenCategories, hiddenPaoTypes]
   );
 
   const groups = useMemo(() => {
@@ -399,6 +420,35 @@ function CommTest(): JSX.Element {
             </div>
           ))}
 
+          <div className={styles.channelToggles} role="group" aria-label="PAO types">
+            <span className={styles.toggleLabel}>PAO types</span>
+            <button
+              type="button"
+              className={`${styles.toggle} ${styles.categoryActive}`}
+              onClick={() => setHiddenPaoTypes(new Set())}
+            >
+              Show all
+            </button>
+            {paoTypeCounts.map(([type, count]) => (
+              <button
+                key={type}
+                type="button"
+                className={`${styles.toggle} ${hiddenPaoTypes.has(type) ? styles.categoryInactive : styles.categoryActive}`}
+                aria-pressed={!hiddenPaoTypes.has(type)}
+                onClick={() =>
+                  setHiddenPaoTypes((previous) => {
+                    const next = new Set(previous);
+                    if (next.has(type)) next.delete(type);
+                    else next.add(type);
+                    return next;
+                  })
+                }
+              >
+                {PAO_TYPE_LABELS[type]} ({count.toLocaleString()})
+              </button>
+            ))}
+          </div>
+
           {groups.length > 0 && (
             <div className={styles.channelToggles}>
               <label className={styles.toggleLabel} htmlFor="transcript-date">
@@ -455,6 +505,11 @@ function CommTest(): JSX.Element {
                         <span className={styles.categoryBadge}>
                           {categoryLabel(row.entry.category || "uncategorized")}
                         </span>
+                        {row.entry.pao_type && (
+                          <span className={styles.categoryBadge}>
+                            {PAO_TYPE_LABELS[row.entry.pao_type]}
+                          </span>
+                        )}
                         {row.entry.text}
                       </div>
                     </div>

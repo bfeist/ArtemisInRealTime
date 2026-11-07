@@ -1,7 +1,7 @@
-"""Step 1c — Publish final comm transcripts and reconcile playback audio.
+"""Step 1c — Prepare comm classification inputs and reconcile playback audio.
 
-Reads per-file transcript JSONs and produces comm.json for the web frontend
-and pipe-delimited comm.csv for batch consumers, sorted chronologically.
+Reads per-file transcript JSONs and prepares internal comm.json and comm.csv,
+sorted chronologically. Step 1i publishes enriched transcripts after classification.
 Audio imports prepare a cache in processed/comm_audio/. After filtering and
 loop precedence, this step publishes only referenced audio under web/comm/.
 
@@ -14,7 +14,7 @@ Output columns: t|s|d|src|text
 
 Input:  {data_dir}/{mission}/processed/transcripts/comm/{date}/*.json
 Output: {data_dir}/{mission}/processed/transcripts/inputs/comm.csv
-        {data_dir}/{mission}/web/comm.json (optional speaker per utterance)
+        {data_dir}/{mission}/processed/transcripts/inputs/comm.json (optional speaker)
 """
 
 import argparse
@@ -50,7 +50,7 @@ HALLUCINATIONS = {
 }
 
 
-def build_web_comm(mission: MissionConfig) -> None:
+def prepare_comm(mission: MissionConfig) -> None:
     if not mission.ia_comm_collection:
         print(f"  No comm audio configured for {mission.name}. Skipping.")
         return
@@ -155,7 +155,7 @@ def build_web_comm(mission: MissionConfig) -> None:
         for row in transcripts:
             f.write("|".join(row) + "\n")
     os.replace(tmp, out_path)
-    atomic_json(mission.web_dir / "comm.json", [web_entries[row] for row in transcripts])
+    atomic_json(mission.transcript_inputs / "comm.json", [web_entries[row] for row in transcripts])
 
     print(f"  Saved {len(transcripts)} comm entries to {out_path}")
     referenced = {row[3] for row in transcripts}
@@ -171,16 +171,16 @@ def build_web_comm(mission: MissionConfig) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Publish comm transcripts and reconcile web audio")
+    parser = argparse.ArgumentParser(description="Prepare comm classification inputs and reconcile web audio")
     parser.add_argument("--mission", required=True, choices=list(MISSIONS.keys()))
     args = parser.parse_args()
 
     mission = MISSIONS[args.mission]
     mission.ensure_dirs()
 
-    print(f"\n=== Step 1c: Publish comm — {mission.name} ===\n")
+    print(f"\n=== Step 1c: Prepare comm — {mission.name} ===\n")
     with plan_lock(mission.data_dir / "processed" / "comm_audio_manifest.json"):
-        build_web_comm(mission)
+        prepare_comm(mission)
 
 
 if __name__ == "__main__":

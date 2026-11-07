@@ -1,7 +1,7 @@
 """Publish enriched comm/PAO for the transcript viewer without running models.
 
 Read canonical classifications (1d); take text/timing/audio from current source inputs.
-The enriched CSV projections and all model diagnostics remain processing files.
+Publishes transcripts.json and enriched COMM/PAO CSVs. Model diagnostics stay in processing.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import MISSIONS, MissionConfig
-from history_common import transcript, file_digest, read_jsonl, require_artifacts, stage_lock
+from history_common import transcript, file_digest, read_jsonl, require_artifacts, stage_lock, write_csvs
 from shared.pds import atomic_json
 
 ASSESSMENT_FIELDS = ("importance", "category", "tags", "topic", "event_id", "statement_kinds")
@@ -28,15 +28,15 @@ def publish_transcripts(mission: MissionConfig) -> dict:
         ledger_path = source / "utterances.jsonl"
 
         inputs = [ledger_path, mission.transcript_input("comm.csv"),
-                  mission.transcript_input("PAO.csv"), mission.web_dir / "comm.json"]
+                  mission.transcript_input("PAO.csv"), mission.transcript_inputs / "comm.json"]
         checksums = {str(path): file_digest(path) for path in inputs}
         ledger = {row["uid"]: row for row in read_jsonl(ledger_path)}
-        structured_path = mission.web_dir / "comm.json"
+        structured_path = mission.transcript_inputs / "comm.json"
         structured = json.loads(structured_path.read_text(encoding="utf-8")) if structured_path.exists() else []
         speakers = {(row["t"], row.get("src"), float(row.get("s", 0))): row.get("speaker")
                     for row in structured}
         result = {"schema_version": 1, "source_stage": source.name, "comm": [], "pao": []}
-        assessed = 0
+        assessed, csv_records = 0, []
         for utterance in transcript.load_all_utterances(mission):
             row = {"t": utterance["t"], "text": utterance["text"],
                    "source": transcript.transcript_source(utterance)}
@@ -50,8 +50,11 @@ def publish_transcripts(mission: MissionConfig) -> dict:
                     if row["text"].startswith(prefix):
                         row["text"] = row["text"][len(prefix):]
             assessment = ledger.get(utterance["uid"], {})
+            csv_records.append({**assessment, **utterance})
             row.update({key: assessment[key] for key in ASSESSMENT_FIELDS
                         if assessment.get(key) is not None})
+            if utterance["channel"] == "pao" and assessment.get("pao_type") is not None:
+                row["pao_type"] = assessment["pao_type"]
             assessed += bool(row.get("category"))
             result[utterance["channel"]].append(row)
         if not result["comm"] and not result["pao"]:
@@ -60,10 +63,13 @@ def publish_transcripts(mission: MissionConfig) -> dict:
             raise RuntimeError("Transcript inputs changed during publication; rerun 1i")
         if require_artifacts(source) != manifest:
             raise RuntimeError("Assessments changed during publication; rerun 1i")
+        write_csvs(mission.web_dir, csv_records)
         atomic_json(mission.web_dir / "transcripts.json", result)
         report = {"source_stage": source.name, "input_hashes": checksums,
                   "comm_entries": len(result["comm"]), "pao_entries": len(result["pao"]),
-                  "categorized_entries": assessed}
+                  "categorized_entries": assessed,
+                  "artifacts": {name: file_digest(mission.web_dir / name) for name in
+                                ("transcripts.json", "comm_enriched.csv", "PAO_enriched.csv")}}
         atomic_json(root / "publication_report.json", report)
         return report
 

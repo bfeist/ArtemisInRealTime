@@ -79,6 +79,50 @@ describe("comm test category filters", () => {
     expect(screen.getByText("3 shown")).toBeInTheDocument();
   });
 
+  it("filters PAO broadcast types independently of subjects and COMM", async () => {
+    vi.mocked(loadEnrichedTranscripts).mockResolvedValue({
+      comm: [{ t: "2026-04-01T18:00:00Z", d: 1, text: "Technical reply.", category: "systems" }],
+      pao: [
+        {
+          t: "2026-04-01T18:01:00Z",
+          text: "Coverage introduction.",
+          category: "mission_background",
+          pao_type: "filler",
+        },
+        {
+          t: "2026-04-01T18:02:00Z",
+          text: "Mission explanation.",
+          category: "mission_background",
+          pao_type: "commentary",
+        },
+        {
+          t: "2026-04-01T18:03:00Z",
+          text: "Systems explanation.",
+          category: "systems",
+          pao_type: "commentary",
+        },
+      ],
+    });
+    renderPage();
+    const types = await screen.findByRole("group", { name: "PAO types" });
+    const subjects = screen.getByRole("group", { name: "PAO categories" });
+    expect(within(types).getByRole("button", { name: "PAO filler (1)" })).toBeInTheDocument();
+    fireEvent.click(within(types).getByRole("button", { name: "PAO filler (1)" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Coverage introduction.")).not.toBeInTheDocument()
+    );
+    expect(screen.getByText("Technical reply.")).toBeInTheDocument();
+    expect(screen.getByText("Mission explanation.")).toBeInTheDocument();
+    fireEvent.click(within(subjects).getByRole("button", { name: "Mission background (2)" }));
+    await waitFor(() => expect(screen.queryByText("Mission explanation.")).not.toBeInTheDocument());
+    expect(screen.getByText("Systems explanation.")).toBeInTheDocument();
+    fireEvent.click(within(types).getByRole("button", { name: "Show all" }));
+    expect(screen.queryByText("Coverage introduction.")).not.toBeInTheDocument();
+    fireEvent.click(within(subjects).getByRole("button", { name: "Show all" }));
+    expect(await screen.findByText("Coverage introduction.")).toBeInTheDocument();
+    expect(screen.getByText("4 shown")).toBeInTheDocument();
+  });
+
   it("renders a bounded set of DOM rows for 50,000 transcripts and keeps date navigation", async () => {
     vi.mocked(loadEnrichedTranscripts).mockResolvedValue({
       comm: Array.from({ length: 50_000 }, (_, index) => ({

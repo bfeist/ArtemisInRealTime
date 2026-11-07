@@ -4,32 +4,21 @@ Artemis I was uncrewed — this entire pipeline is skipped for `artemis-i`.
 
 ## Data Flow
 
+```text
+1a download -> 1b/1b3/1b4 transcribe/import -> 1c prepare COMM inputs + audio
+2j transcribe YouTube --------------------> 2k prepare PAO input
+                                              |
+                         processed/transcripts/inputs/ (plain intermediates)
+                                              |
+                         1d classify -> 1e discover -> 1f verify -> 1g/1h history
+                              |
+                         1i publish enriched JSON + CSVs under web/
 ```
-archive.org (Artemis-II-ACR-Collection)
-    │
-    ▼
-┌──────────────────────────────────────┐
-│  1a — Download ZIPs from IA          │
-│  Reads: IA metadata API              │
-│  Saves: raw/comm/*.zip               │
-│         raw/comm/{date}/*.wav        │  (auto-extracted from ZIPs)
-└──────────────┬───────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────┐
-│  1b — Transcribe with WhisperX       │
-│  Reads: raw/comm/**/*.wav            │
-│  Saves: processed/transcripts/comm/  │
-│         {date}/{filename}.json       │  (one JSON per WAV)
-└──────────────┬───────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────┐
-│  1c — Web-ready JSON                 │
-│  Reads: processed/transcripts/comm/  │
-│  Saves: web/comm.json                │
-└──────────────────────────────────────┘
-```
+
+Plain transcript files stay under processing. All transcript views use the
+`transcripts.json` publication; web CSV exports are `comm_enriched.csv` and
+`PAO_enriched.csv`. Input preparation must precede classification; publication
+must follow it.
 
 ## Step Details
 
@@ -67,12 +56,12 @@ Each output JSON contains:
 }
 ```
 
-### 1c: Publish comm transcripts and audio (`1c_web_comm.py`)
+### 1c: Prepare comm inputs and publish audio (`1c_prepare_comm.py`)
 
 |                |                                        |
 | -------------- | -------------------------------------- |
 | **Input**      | `processed/transcripts/comm/**/*.json` |
-| **Output**     | `web/comm.json`, `processed/transcripts/inputs/comm.csv`, `web/comm_sources.json` |
+| **Output**     | `processed/transcripts/inputs/comm.json`, `processed/transcripts/inputs/comm.csv`, `web/comm_sources.json` |
 | **Idempotent** | Yes — overwrites output each run       |
 
 Audio producers (`1b`, standalone `1b2`, `1b3`, and `1b4`) prepare playback
@@ -85,7 +74,7 @@ After hallucination filtering and corrected-loop precedence, `1c`:
 2. Publishes only referenced recordings into `web/comm`, using hard links
    where supported and copies otherwise. A file with any surviving utterance
    stays published; M4A recordings retain their playback offsets and range seeking.
-3. Writes `comm.csv`, `comm.json`, and the referenced PDS source metadata.
+3. Writes internal `inputs/comm.csv` and `inputs/comm.json`, plus referenced PDS source metadata. It does not publish plain transcript indexes.
 4. Moves every unreferenced file out of `web/comm` into the processing cache,
    then removes empty date folders. This includes superseded AI clips, filtered
    clips, and excluded Mission Audio. Conflicting cached versions are retained
@@ -110,11 +99,12 @@ Columns are `t|s|d|src|text`: segment UTC, audio offset, segment duration,
 audio source relative to `web/comm/`, and text. Machine transcripts receive
 hallucination filtering; supplied PDS transcripts retain their text.
 
-The app reads `web/comm.json`, using the shared TypeScript `CommEntry` type.
+The app reads enriched `web/transcripts.json`, published by 1i, using the shared
+TypeScript `CommEntry` type.
 Each entry has `t`, `s`, `d`, `src`, `text`, and optional `speaker`. Speaker
 names are separate from the utterance text and rendered when present in the
 comm list, player and timeline tooltips. Utterances without speaker metadata
-omit the field. All views can fall back to older `comm.csv` assets.
+omit the field. Plain JSON and CSV transcripts are not web fallbacks.
 The five-column batch CSV keeps its existing `[speaker] text` representation
 for downstream enrichment and PAO matching; it does not gain a new column.
 
@@ -176,7 +166,7 @@ for details. Step `1d` classifies the corrected utterances from the updated comm
 
 ## Transcript classification and verified history
 
-The canonical flow is **1c + 2k ? 1d ? 1e ? 1f ? 1g ? 1h ? 1i**.
+The canonical flow is **1c + 2k -> 1d -> 1e -> 1f -> 1g -> 1h -> 1i**.
 The ordinary all-steps runner prepares both source inputs before starting 1d.
 `comm-history` runs 1d through 1i, including classification. From the repository
 root, after source transcription/import, rebuild inputs and run the whole
@@ -193,25 +183,32 @@ migration or reclassification to remain on disk.
 
 ### 1d: Classify transcripts (`1d_enrich_transcripts.py`)
 
-Reads `processed/transcripts/inputs/comm.csv` and `PAO.csv`, with legacy web CSV
-fallback for older inputs. Uses **HGX**, model alias **LLM-Alpha-512K
+Reads internal `processed/transcripts/inputs/comm.csv` and `PAO.csv`. Uses **HGX**, model alias **LLM-Alpha-512K
 (GLM-5.3-Flash)**, low reasoning, and the tested constrained `transcript_labels`
 JSON schema. A normal 50-row window needs one model request. Source-balanced
 context includes neighboring turns from each target recording within ten minutes.
 
-Subject category, importance, tags, topic, statement kinds and conversation
-threads are independent fields. Source identity comes from metadata: **PAO,
+Subject category, importance, tags, topic, statement kinds, conversation threads
+and PAO broadcast type are independent fields. Source identity comes from metadata: **PAO,
 OE-1, OE-2, PCD**, or explicitly unknown. Simultaneous recording sources do
 not become one conversation thread. Classification never discovers milestones,
 attributes crew, or requires event extraction.
 
 The subject categories are `maneuver`, `systems`, `photography`, `science`,
 `crew_life`, `media_event`, `milestone`, `communications`, `mission_background`,
-`social`, and `unspecified`. PAO-named filler categories are retired. A low-value
+`social`, and `unspecified`. PAO filler/commentary are not subject categories. A low-value
 acknowledgment retains its supported technical subject; a genuine social turn
 can have a separate social thread. An unrecoverable subject stays `unspecified`.
 Future countdowns require `plan`; observations and suspected causes retain their
 separate contribution kinds. Hypotheses must not become asserted causal facts.
+
+`pao_type` separately records `filler`, `commentary` or `other` for PAO only.
+Filler covers promotion, introductions and coverage padding; commentary covers
+narration/explanation; other covers remaining PAO content, including operational calls. This field does
+not replace a technical subject or follow automatically from importance. The
+same constrained request supplies it: there is no additional model pass. The
+flat response schema uses `not_applicable` for non-PAO targets; Python rejects
+PAO types on COMM and omits that field from saved COMM assessments.
 
 Each response is validated per row. Valid rows are saved atomically before any
 repair request. Only rejected or missing rows are retried, once per invocation,
@@ -254,14 +251,17 @@ use `--retry-unresolved` to retry those event tasks explicitly. There is no
 transcript-wide labeling review or final label reconciliation during investigation.
 The utterance classifications pass through unchanged.
 
-### 1g?1i: Build and publish
+### 1g-1i: Build and publish
 
 - **1g** builds the mission hierarchy from canonical 1f verified history and
   classifications. Planned activities remain unconfirmed until supported by events.
 - **1h** publishes `web/timeline.json` and optional crew tracks under
   `web/timeline/crew/`. Detailed evidence remains in processing.
-- **1i** publishes `web/transcripts.json` directly from canonical 1d classifications,
+- **1i** publishes `web/transcripts.json`, `web/comm_enriched.csv` and
+  `web/PAO_enriched.csv` directly from canonical 1d classifications,
   retaining current source text, audio offsets, durations and separate speaker names.
+  PAO type filters (including PAO filler and PAO commentary) combine independently
+  with subject filters; they do not affect COMM.
   It can run after 1d without waiting for event research.
 
 These stages make no model requests. Manifests verify upstream inputs and output
@@ -271,7 +271,7 @@ hashes; changed or incomplete inputs fail instead of selecting alternate outputs
 
 ```text
 processed/transcripts/
-  inputs/              # comm.csv and PAO.csv from 1c and 2k
+  inputs/              # Internal comm.csv, comm.json and PAO.csv from 1c and 2k
   1d_enrichment/       # Classified utterances; work checkpoints and HGX diagnostics
   1e_discovery/        # Classified utterances plus unverified milestone candidates
   1f_investigation/    # Verified events, investigation audit, source snapshots
@@ -280,9 +280,12 @@ processed/transcripts/
   1i_web_transcripts/  # Transcript publication report
 ```
 
-Stages 1d?1f use `utterances.jsonl`, `milestones.jsonl`, processing CSV projections
-and `report.json` artifact manifests. The classification stage has no milestones.
-Work checkpoints and request diagnostics live inside each stage. A manifest is
+Stages 1d-1f use `utterances.jsonl`, `milestones.jsonl`, processing CSV projections
+and `report.json` artifact manifests. The classification stage has no milestones. PAO CSV columns are
+`t|importance|category|tags|topic|event_id|pao_type|text`; subject category and
+broadcast type are separate. COMM CSV columns remain unchanged.
+1i alone writes enriched web transcript exports; no stage publishes plain CSVs
+or plain comm JSON. Work checkpoints and request diagnostics live inside each stage. A manifest is
 committed only when all pending work is finished; validated work survives an
 interruption before that point. The runner stops at an incomplete stage.
 

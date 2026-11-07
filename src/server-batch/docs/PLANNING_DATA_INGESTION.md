@@ -30,7 +30,7 @@ src/
 ├── 1_comm/                    # Audio communications (Artemis II only)
 │   ├── 1a_download_ia_zips.py       # Download ZIPs from archive.org
 │   ├── 1b_transcribe.py             # WhisperX transcription
-│   └── 1c_web_comm.py               # Produce web-ready JSON
+│   └── 1c_prepare_comm.py           # Prepare internal COMM transcript inputs
 │
 ├── 2_video/                   # YouTube livestreams + IA video
 │   ├── 2a_ia_video_discover.py      # Discover IA items by subject tag + uploader search
@@ -170,10 +170,11 @@ Artemis I was uncrewed — no space-to-ground or crew communications exist.
 - Optional: simple Artemis II crew roster + terminology list as WhisperX initial_prompt
 - Store results in `$DATA_DIR/artemis-ii/processed/transcripts/comm/`
 
-### Step 1c: Web-ready JSON
+### Step 1c: Prepare COMM inputs
 
-- Aggregate per-file transcripts into a single `comm.json`
-- Format: array of segments with `{ timestamp, speaker, text, audioFile }`
+- Aggregate per-file transcripts into internal `processed/transcripts/inputs/comm.csv` and `comm.json`.
+- Retain timing, audio offsets, recording sources and separate speaker metadata for classification.
+- Step 1d classifies these inputs; step 1i publishes the enriched web transcripts.
 
 ---
 
@@ -861,7 +862,7 @@ Scripts accept `--mission artemis-i` or `--mission artemis-ii`. The `run_all.py`
 
 1.  1a_download_ia_zips.py # Download comm audio from archive.org
 2.  1b_transcribe.py # Transcribe comm audio (GPU)
-3.  1c_web_comm.py # Generate comm.json
+3.  1c_prepare_comm.py # Prepare internal COMM transcripts for classification
 
 4.  2a_ia_video_discover.py # Discover IA items (Artemis-II collection + subject search)
 5.  2b_ia_video_download.py # Download MP4s

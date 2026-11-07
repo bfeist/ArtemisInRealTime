@@ -12,7 +12,7 @@ from config import MissionConfig
 from shared.comm_audio import audio_relative_path
 from shared.comm_encoding import AAC_PROFILE
 
-web = importlib.import_module("1_comm.1c_web_comm")
+prepare = importlib.import_module("1_comm.1c_prepare_comm")
 
 
 class CommAudioTests(unittest.TestCase):
@@ -72,7 +72,9 @@ class CommAudioTests(unittest.TestCase):
         self.write_audio("pcd/crew.m4a", cached=True)
         original_transcript = (self.transcripts / (superseded + ".json")).read_bytes()
 
-        web.build_web_comm(self.mission)
+        prepare.prepare_comm(self.mission)
+        self.assertFalse((self.mission.web_dir / "comm.json").exists())
+        self.assertFalse((self.mission.web_dir / "comm.csv").exists())
         self.assertEqual(self.published(), {kept, "loops/corrected_oe1.m4a", "pcd/crew.m4a"})
         for relative in stale:
             self.assertEqual((self.mission.comm_audio_cache / relative).read_bytes(), b"prepared audio")
@@ -80,14 +82,14 @@ class CommAudioTests(unittest.TestCase):
         self.assertEqual(report["retired_files"], 3)
         self.assertEqual(report["files"][kept]["utterances"], 1)
         self.assertEqual((self.transcripts / (superseded + ".json")).read_bytes(), original_transcript)
-        first = (self.mission.web_dir / "comm.json").read_bytes()
-        web.build_web_comm(self.mission)
-        self.assertEqual((self.mission.web_dir / "comm.json").read_bytes(), first)
+        first = (self.mission.transcript_inputs / "comm.json").read_bytes()
+        prepare.prepare_comm(self.mission)
+        self.assertEqual((self.mission.transcript_inputs / "comm.json").read_bytes(), first)
         self.assertEqual(len(list((self.mission.data_dir / "processed/comm_audio_reconciliations").glob("*.json"))), 1)
 
         # Removing corrected authority restores AI directly from preserved audio.
         loop.unlink()
-        web.build_web_comm(self.mission)
+        prepare.prepare_comm(self.mission)
         self.assertIn(stale[0], self.published())
         self.assertNotIn("loops/corrected_oe1.m4a", self.published())
         self.assertEqual(set(json.loads((self.mission.web_dir / "comm_sources.json").read_text())), {"pcd/crew.m4a"})
@@ -98,7 +100,7 @@ class CommAudioTests(unittest.TestCase):
         previous = self.mission.web_dir / "comm.json"
         previous.write_text('[{"src":"old.aac"}]')
         with self.assertRaisesRegex(RuntimeError, "Missing or empty comm audio"):
-            web.build_web_comm(self.mission)
+            prepare.prepare_comm(self.mission)
         self.assertEqual(previous.read_text(), '[{"src":"old.aac"}]')
         self.assertTrue(stale.is_file())
 
@@ -106,19 +108,19 @@ class CommAudioTests(unittest.TestCase):
         stale = self.write_audio("old.aac")
         path = self.transcript("empty", segments=[])
         with self.assertRaisesRegex(RuntimeError, "Refusing to publish empty comm"):
-            web.build_web_comm(self.mission)
+            prepare.prepare_comm(self.mission)
         path.write_text("{broken")
         with self.assertRaises(json.JSONDecodeError):
-            web.build_web_comm(self.mission)
+            prepare.prepare_comm(self.mission)
         self.assertTrue(stale.is_file())
 
     def test_failed_index_write_does_not_retire_audio(self):
         self.transcript("needed")
         self.write_audio("needed.aac", cached=True)
         stale = self.write_audio("old.aac")
-        with patch.object(web, "atomic_json", side_effect=OSError("disk full")):
+        with patch.object(prepare, "atomic_json", side_effect=OSError("disk full")):
             with self.assertRaisesRegex(OSError, "disk full"):
-                web.build_web_comm(self.mission)
+                prepare.prepare_comm(self.mission)
         self.assertTrue(stale.is_file())
 
     def test_cache_updates_replace_web_audio_and_retirement_keeps_older_versions(self):
@@ -127,7 +129,7 @@ class CommAudioTests(unittest.TestCase):
         self.write_audio("needed.aac", cached=True, content=b"new")
         self.write_audio("unused.aac", content=b"older unused")
         self.write_audio("unused.aac", cached=True, content=b"newer unused")
-        web.build_web_comm(self.mission)
+        prepare.prepare_comm(self.mission)
         self.assertEqual((self.audio / "needed.aac").read_bytes(), b"new")
         self.assertEqual((self.mission.comm_audio_cache / "unused.aac").read_bytes(), b"newer unused")
         retired = list((self.mission.comm_audio_cache / "_retired").rglob("unused.aac"))
@@ -140,7 +142,7 @@ class CommAudioTests(unittest.TestCase):
         self.write_audio("2026-04-05/" + name + ".aac")
         self.transcript("explicit", "2026-04-06/explicit.aac")
         self.write_audio("2026-04-06/explicit.aac", cached=True)
-        web.build_web_comm(self.mission)
+        prepare.prepare_comm(self.mission)
         self.assertEqual(self.published(), {"2026-04-05/" + name + ".aac", "2026-04-06/explicit.aac"})
 
     def test_escaping_references_and_linked_publication_paths_fail_without_moves(self):
@@ -156,7 +158,7 @@ class CommAudioTests(unittest.TestCase):
         except OSError:
             self.skipTest("Creating symbolic links requires privileges")
         with self.assertRaises(ValueError):
-            web.build_web_comm(self.mission)
+            prepare.prepare_comm(self.mission)
         self.assertEqual(outside.read_bytes(), b"outside")
 
     def test_radio_and_excluded_mission_audio_backfill_stay_outside_web(self):

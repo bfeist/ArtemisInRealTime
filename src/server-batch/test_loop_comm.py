@@ -11,7 +11,7 @@ from config import MissionConfig
 from shared.pds_comm import BUNDLE
 from shared.pds_loops import apply_loop_precedence, import_loops, iso, normalize_loop, timestamp
 
-web = importlib.import_module("1_comm.1c_web_comm")
+prepare = importlib.import_module("1_comm.1c_prepare_comm")
 
 
 class LoopCommTests(unittest.TestCase):
@@ -152,15 +152,15 @@ class LoopCommTests(unittest.TestCase):
             import_loops(self.mission)
             media.assert_called_once()
         self.assertFalse((self.mission.web_dir / "comm").exists())
-        web.build_web_comm(self.mission)
+        prepare.prepare_comm(self.mission)
         first = (self.mission.transcript_inputs / "comm.csv").read_bytes()
-        web.build_web_comm(self.mission)
+        prepare.prepare_comm(self.mission)
         self.assertEqual(first, (self.mission.transcript_inputs / "comm.csv").read_bytes())
         self.assertEqual(ai.read_bytes(), original)
         self.assertNotIn(b"AI wrong", first)
         self.assertIn(b"[Koch] Thank you.", first)
         self.assertEqual(timestamp(first.decode().split("|", 1)[0]), self.base + 10)
-        entries = json.loads((self.mission.web_dir / "comm.json").read_text())
+        entries = json.loads((self.mission.transcript_inputs / "comm.json").read_text())
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["speaker"], "Koch")
         self.assertEqual(entries[0]["text"], "Thank you.")

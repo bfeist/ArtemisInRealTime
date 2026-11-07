@@ -67,7 +67,8 @@ class HistoryPipelineTest(unittest.TestCase):
             self.addCleanup(storage.stop)
         self.mission.ensure_dirs()
         self.root = self.mission.processed_transcripts
-        (self.mission.web_dir / "PAO.csv").write_text(
+        self.mission.transcript_inputs.mkdir(parents=True)
+        (self.mission.transcript_inputs / "PAO.csv").write_text(
             "2026-04-01T17:00:00Z|We are configured for that conference.\n"
             "2026-04-01T17:01:00Z|We will start the conference later.\n", encoding="utf-8")
         self.utterances = enrich.load_all_utterances(self.mission)

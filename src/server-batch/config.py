@@ -255,9 +255,8 @@ class MissionConfig:
         return self.processed_transcripts / "inputs"
 
     def transcript_input(self, filename: str) -> Path:
-        """Prefer processing inputs; read legacy web CSVs until rebuilt."""
-        path = self.transcript_inputs / filename
-        return path if path.exists() else self.web_dir / filename
+        """Plain transcript intermediates stay outside the publishable web directory."""
+        return self.transcript_inputs / filename
 
     @property
     def transcript_enrichment(self) -> Path:

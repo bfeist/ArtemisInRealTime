@@ -22,9 +22,20 @@ separately. A low importance score does not remove a contextual technical subjec
 
 Return only the JSON object required by the response schema, with a labels array containing
 exactly one row for each target index, ascending order. No rows for context-only material.
-Each row has i, imp, cat, tags, topic, kinds, thread. Example:
-{"labels":[{"i":0,"imp":2,"cat":"systems","tags":["camera power"],"topic":"Acknowledgment of camera power status","kinds":["acknowledgment"],"thread":"camera_power"}]}
+Each row has i, imp, cat, tags, topic, kinds, thread, pao_type. Example for COMM:
+{"labels":[{"i":0,"imp":2,"cat":"systems","tags":["camera power"],"topic":"Acknowledgment of camera power status","kinds":["acknowledgment"],"thread":"camera_power","pao_type":"not_applicable"}]}
 The example is a schema illustration, not source evidence.
+
+pao_type is a separate PAO broadcast-role classification, never a subject category:
+- filler: promotion, presenter introductions, coverage housekeeping, pleasantries or
+  padding with no useful mission explanation or operational contribution.
+- commentary: public-affairs narration, background, explanation or recap. Technical
+  commentary retains its technical cat; do not replace that subject with commentary.
+- other: remaining PAO content, including direct operational calls/status reports or
+  mission exchanges, rather than narration or filler.
+- not_applicable: REQUIRED for every source other than PAO and INVALID for PAO.
+Choose this from source words and context, independently of imp. Never infer filler
+from a low importance score or an unknown subject. COMM cannot receive a PAO type.
 
 kinds is a nonempty list from report, hypothesis, plan, question, acknowledgment, background,
 impression, transition. These describe this row's contribution, not its category. A short
@@ -64,7 +75,8 @@ def response_format(size: int) -> dict:
             "kinds": {"type": "array", "items": {"type": "string", "enum": sorted(STATEMENT_KINDS)},
                       "minItems": 1, "maxItems": len(STATEMENT_KINDS)},
             "thread": {"type": "string", "minLength": 1},
-        }, "required": ["i", "imp", "cat", "tags", "topic", "kinds", "thread"], "additionalProperties": False,
+            "pao_type": {"type": "string", "enum": ["commentary", "filler", "other", "not_applicable"]},
+        }, "required": ["i", "imp", "cat", "tags", "topic", "kinds", "thread", "pao_type"], "additionalProperties": False,
     }
     return {"type": "json_schema", "json_schema": {"name": "transcript_labels", "strict": True,
         "schema": {"type": "object", "properties": {"labels": {"type": "array", "items": row,
@@ -107,13 +119,16 @@ def parse(content: str, targets: list[dict], known: list[dict] | None = None) ->
         seen.add(i)
         cat, tags, kinds = row.get("cat"), row.get("tags"), row.get("kinds")
         fields = {}
-        expected = {"i", "imp", "cat", "tags", "topic", "kinds", "thread"}
+        expected = {"i", "imp", "cat", "tags", "topic", "kinds", "thread", "pao_type"}
         if set(row) != expected:
             fields["fields"] = {"missing": sorted(expected - row.keys()), "unexpected": sorted(row.keys() - expected)}
         if type(row.get("imp")) is not int or not 1 <= row["imp"] <= 5:
             fields["imp"] = "expected integer 1..5"
         if not isinstance(cat, str) or cat not in CATEGORIES:
             fields["cat"] = "expected one of " + ", ".join(sorted(CATEGORIES))
+        allowed_types = {"commentary", "filler", "other"} if transcript_source(targets[i]) == "PAO" else {"not_applicable"}
+        if not isinstance(row.get("pao_type"), str) or row["pao_type"] not in allowed_types:
+            fields["pao_type"] = "expected " + ", ".join(sorted(allowed_types)) + " for this recording source"
         minimum = MIN_TAGS.get(cat, 1) if isinstance(cat, str) else 1
         if (not isinstance(tags, list) or not minimum <= len(tags) <= 4
                 or any(not isinstance(t, str) or not t.strip() for t in tags)):
@@ -164,6 +179,8 @@ def parse(content: str, targets: list[dict], known: list[dict] | None = None) ->
                          "thread_context": [{"subject": thread, "source_uids": [targets[j]["uid"] for j in
                              sorted((j for j in members if j != i), key=lambda j: (abs(j - i), j))[:12]]
                              + [u["uid"] for u in prior][:max(0, 12 - len(members) + 1)]}]}
+            if source == "PAO":
+                parsed[i]["pao_type"] = row["pao_type"]
     for i in sorted(set(range(len(targets))) - parsed.keys()):
         if i not in invalid:
             issues.append({"reason": "missing_classification", "index": i})

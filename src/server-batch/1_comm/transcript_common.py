@@ -29,7 +29,7 @@ def parse_utc_ts(utc_str: str) -> float:
 
 
 def load_all_utterances(mission: MissionConfig) -> list[dict]:
-    """Merge processing CSVs chronologically, with legacy web/ input fallback."""
+    """Merge the internal processing CSVs chronologically."""
     utterances: list[dict] = []
     seen_uids: set[str] = set()
     comm_sources: dict[str, str] = {}

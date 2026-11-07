@@ -88,7 +88,7 @@
                                │ 2k — Filter YT Transcript        │
                                │ Reads:                           │
                                │  processed/transcripts/yt/*.json │
-                               │  web/comm.json (from 1c)         │
+                               │  processed/transcripts/inputs/comm.csv (from 1c)         │
                                │ Saves:                           │
                                │  web/combined_transcript.json    │
                                └──────────────────────────────────┘
@@ -311,10 +311,10 @@ uv run python -m 2_video.2j_transcribe_yt --mission artemis-ii
 
 |                |                                                                                  |
 | -------------- | -------------------------------------------------------------------------------- |
-| **Input**      | `processed/transcripts/yt/*.json` (from 2j), `web/comm.json` (from 1c)           |
+| **Input**      | `processed/transcripts/yt/*.json` (from 2j), `processed/transcripts/inputs/comm.csv` (from 1c)           |
 | **Output**     | `web/combined_transcript.json` (web), audit files in `processed/transcripts/yt/` |
 | **Idempotent** | Yes — overwrites outputs on each run                                             |
-| **Requires**   | `web/comm.json` from step 1c for dedup and stream start detection                |
+| **Requires**   | `processed/transcripts/inputs/comm.csv` from step 1c for dedup and stream start detection                |
 
 Determines when the YouTube stream began, removes utterances that duplicate the space-to-ground comm channel, and writes a combined timeline for the frontend.
 

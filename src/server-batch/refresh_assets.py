@@ -45,8 +45,9 @@ STAGES = {
         ("photo-cleanup", "3_photos.4f_cleanup_web", []),
         ("web-media", "prepare_web_media", []),
         ("video-index", "2_video.2g_web_video", []),
-        # 1c publishes final transcripts and reconciles web/comm against their sources.
-        ("comm-index", "1_comm.1c_web_comm", []),
+        # 1c prepares internal inputs and reconciles audio; 1i publishes enriched transcripts.
+        ("comm-index", "1_comm.1c_prepare_comm", []),
+        ("comm-transcripts", "1_comm.1i_web_transcripts", []),
         ("trajectory", "5_trajectory.5a_orion_track", []),
         ("moon", "5_trajectory.5b_moon_ephemeris", []),
         ("trajectory-index", "5_trajectory.5c_web_trajectory", []),

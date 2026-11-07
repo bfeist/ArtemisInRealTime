@@ -255,7 +255,7 @@ ok
 Match the style for now, but keep it flexible because we'll be styling this whole app ourselves later.
 
 9. **Future-proofing.** Should the same pipeline auto-handle Artemis III/IV
-   when their OEMs arrive (i.e., a `--mission` flag like `1c_web_comm.py`
+   when their OEMs arrive (i.e., a `--mission` flag like `1c_prepare_comm.py`
    uses), or hard-code Artemis II for now?
 
 keep --mission for now. Actually, that's a good point, have a look around for artemis 1 ephemeris data and see if we can use the same pipeline to process that as well, so we can have a trajectory replay for Artemis 1 on the site too. That way we can verify the pipeline works end-to-end before Artemis 2 data starts coming in, and we'll have more content on the site at launch.

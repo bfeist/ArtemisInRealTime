@@ -25,7 +25,11 @@ runner = importlib.import_module("run_all")
 
 def row(i, **extra):
     return {"i": i, "imp": 2, "cat": "systems", "tags": ["camera"], "topic": "Camera status",
-            "kinds": ["report" if i == 0 else "acknowledgment"], "thread": "camera_power", **extra}
+            "kinds": ["report" if i == 0 else "acknowledgment"], "thread": "camera_power", "pao_type": "not_applicable", **extra}
+
+
+def pao_row(i, **extra):
+    return row(i, **{"pao_type": "commentary", **extra})
 
 
 class Client:
@@ -165,10 +169,28 @@ class SingleClassificationTest(unittest.TestCase):
                    for i, (channel, src) in enumerate([
                        ("pao", ""), ("comm", "first_oe1.wav"),
                        ("comm", "first_oe2.wav"), ("comm", "pcd/test.m4a")])]
-        parsed, issues = classifier.parse(json.dumps({"labels": [row(i) for i in range(4)]}), targets)
+        parsed, issues = classifier.parse(json.dumps({"labels": [row(i, pao_type="commentary" if i == 0 else "not_applicable") for i in range(4)]}), targets)
         self.assertFalse(issues)
         self.assertEqual([r["source"] for r in parsed.values()], ["PAO", "OE-1", "OE-2", "PCD"])
         self.assertTrue(all(not r["thread_context"][0]["source_uids"] for r in parsed.values()))
+
+    def test_pao_type_is_independent_of_subject_and_never_assigned_to_comm(self):
+        self.targets[0]["channel"] = "pao"
+        parsed, issues = self.parse([pao_row(0, cat="mission_background", pao_type="filler"), row(1)])
+        self.assertFalse(issues)
+        self.assertEqual((parsed[0]["category"], parsed[0]["pao_type"]), ("mission_background", "filler"))
+        self.assertNotIn("pao_type", parsed[1])
+        parsed, issues = self.parse([pao_row(0), row(1, pao_type="filler")])
+        self.assertEqual(set(parsed), {0})
+        self.assertIn("pao_type", issues[0]["fields"])
+
+    def test_pao_requires_broadcast_type_but_cannot_use_it_as_subject(self):
+        self.targets[0]["channel"] = "pao"
+        for extra in ({"pao_type": "not_applicable"}, {"pao_type": "invented"}, {"cat": "pao_filler"}):
+            with self.subTest(extra=extra):
+                parsed, issues = self.parse([pao_row(0, **extra), row(1)])
+                self.assertNotIn(0, parsed)
+                self.assertTrue(issues)
 
 
 class EmptyContext:
@@ -216,7 +238,7 @@ class CanonicalPipelineTest(unittest.TestCase):
             return fn(self.mission, self.options, client)
 
     def classify(self):
-        return self.run_stage(stage.classify, Client({"labels": [row(0), row(1)]}))
+        return self.run_stage(stage.classify, Client({"labels": [pao_row(0), pao_row(1)]}))
 
     def extraction(self):
         return {"threads": [{"id": "camera", "subject": "Camera power", "statements": [
@@ -237,7 +259,7 @@ class CanonicalPipelineTest(unittest.TestCase):
 
     def labels(self, root):
         return [{k: r[k] for k in ("category", "importance", "topic", "tags", "source",
-                                   "statement_kinds", "thread_context")}
+                                   "statement_kinds", "thread_context", "pao_type")}
                 for r in common.read_jsonl(root / "utterances.jsonl")]
 
     def test_fresh_pipeline_classifies_once_and_publishes_verified_history(self):
@@ -271,13 +293,13 @@ class CanonicalPipelineTest(unittest.TestCase):
     def test_interruption_saves_valid_labels_before_retry_and_resumes_only_missing(self):
         sentinel = self.mission.web_dir / "transcripts.json"
         sentinel.write_text("previous publication")
-        interrupted = Client({"labels": [row(0), row(1, tags=[])]}, KeyboardInterrupt())
+        interrupted = Client({"labels": [pao_row(0), pao_row(1, tags=[])]}, KeyboardInterrupt())
         with self.assertRaises(KeyboardInterrupt):
             self.run_stage(stage.classify, interrupted)
         checkpoint, = self.mission.transcript_enrichment.glob("work/*/batch_*.json")
         self.assertEqual(set(json.loads(checkpoint.read_text())), {self.original[0]["uid"]})
         self.assertFalse((self.mission.transcript_enrichment / "report.json").exists())
-        resumed = Client({"labels": [row(0, kinds=["acknowledgment"])]})
+        resumed = Client({"labels": [pao_row(0, kinds=["acknowledgment"])]})
         self.assertTrue(self.run_stage(stage.classify, resumed)["complete"])
         self.assertEqual([r["uid"] for r in resumed.calls[0]["prompt"]["targets"]],
                          [self.original[1]["uid"]])
@@ -326,11 +348,11 @@ class CanonicalPipelineTest(unittest.TestCase):
 
     def test_limit_does_not_publish_an_incomplete_dataset(self):
         self.options.batch_size, self.options.limit = 1, 1
-        first = Client({"labels": [row(0)]})
+        first = Client({"labels": [pao_row(0)]})
         self.assertFalse(self.run_stage(stage.classify, first)["complete"])
         with self.assertRaisesRegex(RuntimeError, "missing"):
             self.run_stage(discovery.discover, Client())
-        resumed = Client({"labels": [row(0, kinds=["acknowledgment"])]})
+        resumed = Client({"labels": [pao_row(0, kinds=["acknowledgment"])]})
         self.assertTrue(self.run_stage(stage.classify, resumed)["complete"])
         self.assertEqual(len(resumed.calls), 1)
 
@@ -346,7 +368,7 @@ class CanonicalPipelineTest(unittest.TestCase):
         self.assertNotIn("1ea", ids)
 
     def test_runner_executes_fresh_history_group_with_mocked_hgx(self):
-        replies = [{"labels": [row(0), row(1)]}, self.extraction(),
+        replies = [{"labels": [pao_row(0), pao_row(1)]}, self.extraction(),
                    {"action": "search", "query": "cameras"}, self.finish()]
         calls = []
         def stream(prompt, **kwargs):
@@ -371,7 +393,7 @@ class CanonicalPipelineTest(unittest.TestCase):
         source = self.mission.transcript_inputs / "PAO.csv"
         source.write_text(source.read_text() + "2026-04-01T17:00:02Z|Recording has started.\n", encoding="utf-8")
         self.original = common.transcript.load_all_utterances(self.mission)
-        self.run_stage(stage.classify, Client({"labels": [row(0), row(1), row(2, kinds=["report"])]}))
+        self.run_stage(stage.classify, Client({"labels": [pao_row(0), pao_row(1), pao_row(2, kinds=["report"])]}))
         extraction = self.extraction()
         extraction["threads"].append({"id": "recording", "subject": "Recording", "statements": [
             {"indices": [2], "kind": "report", "summary": "Recording started", "crew": []}]})

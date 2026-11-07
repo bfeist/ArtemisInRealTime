@@ -11,6 +11,7 @@ export interface TranscriptAssessment {
 export interface PaoEntry extends TranscriptAssessment {
   t: string;
   text: string;
+  pao_type?: "commentary" | "filler" | "other";
 }
 
 export interface CommEntry extends PaoEntry {

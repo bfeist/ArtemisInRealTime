@@ -12,7 +12,7 @@ from shared.pds import db
 from shared.pds_comm import BUNDLE, enrich_pcd, import_pcd, supplied_segments, utc_time
 from shared.comm_encoding import AAC_PROFILE
 
-web = importlib.import_module("1_comm.1c_web_comm")
+prepare = importlib.import_module("1_comm.1c_prepare_comm")
 
 
 class PcdCommTests(unittest.TestCase):
@@ -92,13 +92,13 @@ class PcdCommTests(unittest.TestCase):
             encode.assert_called_once()
         self.assertFalse((self.mission.web_dir / "comm").exists())
         self.assertTrue((self.mission.comm_audio_cache / "pcd/art002a000005.m4a").is_file())
-        web.build_web_comm(self.mission)
+        prepare.prepare_comm(self.mission)
         row = (self.mission.transcript_inputs / "comm.csv").read_text(encoding="utf-8").strip().split("|")
         self.assertEqual(row, ["2026-04-06T20:03:55.301000Z", "3.5", "2.5", "pcd/art002a000005.m4a", "[Koch] Thank you."])
         sources = json.loads((self.mission.web_dir / "comm_sources.json").read_text())
         self.assertEqual(sources[row[3]]["source_kind"], "crew_onboard")
         self.assertEqual(sources[row[3]]["transcript_source"], "pds_supplied")
-        entry = json.loads((self.mission.web_dir / "comm.json").read_text())[0]
+        entry = json.loads((self.mission.transcript_inputs / "comm.json").read_text())[0]
         self.assertEqual(entry["speaker"], "Koch")
         self.assertEqual(entry["text"], "Thank you.")
         self.assertEqual((entry["s"], entry["d"]), (3.5, 2.5))
@@ -124,7 +124,7 @@ class PcdCommTests(unittest.TestCase):
             temporary.replace(target)
         with patch("shared.pds_comm._duration", return_value=10), patch("shared.pds_comm._web_audio", side_effect=media):
             import_pcd(self.mission)
-        web.build_web_comm(self.mission)
+        prepare.prepare_comm(self.mission)
         before_csv = (self.mission.transcript_inputs / "comm.csv").read_bytes()
         transcript = self.mission.processed_transcripts / "comm/pcd/art002a000005.json"
         previous = json.loads(transcript.read_text())
@@ -132,7 +132,7 @@ class PcdCommTests(unittest.TestCase):
         transcript.write_text(json.dumps(previous))
         with patch("shared.pds_comm._web_audio", side_effect=media) as encode, \
                 patch("shared.pds_comm._duration", side_effect=AssertionError("No transcript/timing rebuild")):
-            web.build_web_comm(self.mission)
+            prepare.prepare_comm(self.mission)
             import_pcd(self.mission)
             encode.assert_called_once_with(self.audio, self.mission.comm_audio_cache / "pcd/art002a000005.m4a")
         upgraded = json.loads(transcript.read_text())
@@ -178,11 +178,11 @@ class PcdCommTests(unittest.TestCase):
                 "segments": [{"start": 0, "end": 1, "text": str(i), "utcTime": stamp}]}))
             self.mission.comm_audio_cache.mkdir(parents=True, exist_ok=True)
             (self.mission.comm_audio_cache / f"{i}.aac").write_bytes(b"audio")
-        web.build_web_comm(self.mission)
+        prepare.prepare_comm(self.mission)
         rows = (self.mission.transcript_inputs / "comm.csv").read_text().splitlines()
         self.assertTrue(rows[0].endswith("|0"))
         self.assertTrue(rows[1].endswith("|1"))
-        entries = json.loads((self.mission.web_dir / "comm.json").read_text())
+        entries = json.loads((self.mission.transcript_inputs / "comm.json").read_text())
         self.assertTrue(all("speaker" not in entry for entry in entries))
 
     def test_missing_delivery_transcript_uses_whisper_and_absolute_utc(self):
