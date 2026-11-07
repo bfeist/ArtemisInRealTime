@@ -1,0 +1,199 @@
+.picker {
+  position: relative;
+}
+
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 40px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #353e49;
+  border-radius: 7px;
+  background: #1b222b;
+  color: #e3e8ee;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.trigger:hover {
+  border-color: #718398;
+}
+
+.trigger:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.filtered {
+  border-color: #6b9fbc;
+  background: #1b303e;
+}
+
+.summary {
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a9bed0;
+  font-size: 0.75rem;
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 20;
+  width: 340px;
+  max-width: calc(100vw - 48px);
+  padding: 1rem;
+  border: 1px solid #3b4857;
+  border-radius: 10px;
+  background: #19212b;
+  box-shadow: 0 16px 48px #00000088;
+  color: #edf1f5;
+  font-size: 0.85rem;
+}
+
+.panelHeader,
+.panelFooter,
+.bulkActions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.panelHeader,
+.panelFooter {
+  justify-content: space-between;
+}
+
+.panelHeader > span,
+.panelFooter > span {
+  color: #a6b2c1;
+  font-size: 0.7rem;
+}
+
+.description {
+  margin: 0.5rem 0 1rem;
+  color: #a6b2c1;
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.bulkActions {
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid #303c49;
+  color: #a6b2c1;
+  font-size: 0.75rem;
+}
+
+.bulkActions button,
+.only,
+.panelFooter button {
+  border: 0;
+  border-radius: 4px;
+  padding: 0.3rem 0.45rem;
+  background: transparent;
+  color: #a9d9f2;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.bulkActions button:hover,
+.only:hover {
+  background: #2a3c4b;
+}
+
+.options {
+  max-height: min(420px, 48vh);
+  overflow-y: auto;
+  padding: 0.4rem 0;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.25rem;
+  border-radius: 5px;
+}
+
+.option:hover,
+.option:focus-within {
+  background: #242f3b;
+}
+
+.optionLabel {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.65rem 0;
+  cursor: pointer;
+}
+
+.optionLabel input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #a9d9f2;
+  cursor: pointer;
+}
+
+.count {
+  margin-left: auto;
+  color: #a6b2c1;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.only {
+  opacity: 0;
+}
+
+.option:hover .only,
+.option:focus-within .only {
+  opacity: 1;
+}
+
+.panelFooter {
+  border-top: 1px solid #303c49;
+  padding-top: 0.75rem;
+}
+
+.panelFooter button {
+  background: #a9d9f2;
+  color: #14212c;
+  padding: 0.4rem 0.8rem;
+}
+
+.picker :focus-visible {
+  outline: 2px solid #a9d9f2;
+  outline-offset: 3px;
+}
+
+@media (hover: none) {
+  .only {
+    opacity: 1;
+  }
+}
+
+@media (width <= 700px) {
+  .picker {
+    position: static;
+  }
+
+  .panel {
+    position: fixed;
+    top: auto;
+    right: 1rem;
+    bottom: 1rem;
+    left: 1rem;
+    width: auto;
+    max-width: none;
+  }
+}

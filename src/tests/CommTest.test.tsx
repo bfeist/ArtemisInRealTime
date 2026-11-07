@@ -87,38 +87,72 @@ describe("comm test category filters", () => {
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
   });
 
-  it("keeps Comm and PAO category selections independent, including Show all", async () => {
+  it("shares category selections across COMM and PAO, with All, None, and Only", async () => {
     renderPage();
-    const comm = await screen.findByRole("group", { name: "Comm categories" });
-    const pao = screen.getByRole("group", { name: "PAO categories" });
-    const commScience = within(comm).getByRole("button", { name: "Science (1)" });
-    const paoScience = within(pao).getByRole("button", { name: "Science (1)" });
+    fireEvent.click(await screen.findByRole("button", { name: "Categories: All" }));
+    const categories = screen.getByRole("group", { name: "Categories" });
+    const science = within(categories).getByRole("checkbox", { name: "Science, 2 entries" });
     await screen.findByText("Science observation.");
-    expect(screen.getByText("4 shown")).toBeInTheDocument();
-    fireEvent.click(commScience);
-    expect(commScience).toHaveAttribute("aria-pressed", "false");
-    expect(paoScience).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(science);
+    expect(science).not.toBeChecked();
     await waitFor(() => expect(screen.queryByText("Science observation.")).not.toBeInTheDocument());
-    expect(screen.getByText("Science commentary.")).toBeInTheDocument();
-    expect(screen.getByText("3 shown")).toBeInTheDocument();
-
-    fireEvent.click(paoScience);
-    await waitFor(() => expect(screen.queryByText("Science commentary.")).not.toBeInTheDocument());
-    fireEvent.click(within(comm).getByRole("button", { name: "Show all" }));
-    expect(await screen.findByText("Science observation.")).toBeInTheDocument();
     expect(screen.queryByText("Science commentary.")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Toggle OE-2 off" }));
-    await waitFor(() => expect(screen.queryByText("Systems check.")).not.toBeInTheDocument());
-    expect(screen.getByText("Koch:")).toBeInTheDocument();
     expect(screen.getByText("2 shown")).toBeInTheDocument();
+
+    fireEvent.click(within(categories).getByRole("button", { name: "All" }));
+    expect(await screen.findByText("Science observation.")).toBeInTheDocument();
+    expect(screen.getByText("Science commentary.")).toBeInTheDocument();
+    fireEvent.click(within(categories).getByRole("button", { name: "Only Science" }));
+    expect(screen.getByText("2 shown")).toBeInTheDocument();
+    expect(screen.queryByText("Systems check.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Categories: Science" })).toBeInTheDocument();
+    fireEvent.click(within(categories).getByRole("button", { name: "None" }));
+    expect(await screen.findByText("No transmissions in this view")).toBeInTheDocument();
+    fireEvent.click(within(categories).getByRole("button", { name: "Done" }));
+    fireEvent.click(
+      within(screen.getByText("No transmissions in this view").parentElement).getByRole("button", {
+        name: "Reset filters",
+      })
+    );
+    expect(await screen.findByText("4 shown")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Categories: All" })).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    );
   });
 
   it("keeps unassessed transcripts visible and allows filtering them", async () => {
     renderPage();
     await screen.findByText("Awaiting assessment.");
-    fireEvent.click(screen.getByRole("button", { name: "Uncategorized (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Categories: All" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Uncategorized, 1 entries" }));
     await waitFor(() => expect(screen.queryByText("Awaiting assessment.")).not.toBeInTheDocument());
     expect(screen.getByText("3 shown")).toBeInTheDocument();
+  });
+
+  it("dismisses pickers with Escape and outside clicks and restores keyboard focus", async () => {
+    renderPage();
+    const trigger = await screen.findByRole("button", { name: "Categories: All" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    fireEvent.pointerDown(document.body);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("exposes unknown channels and resets channel selections", async () => {
+    renderPage();
+    const unknown = await screen.findByRole("switch", { name: "Unknown channel" });
+    fireEvent.click(unknown);
+    expect(screen.queryByText("Awaiting assessment.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "OE-2" }));
+    expect(screen.queryByText("Systems check.")).not.toBeInTheDocument();
+    expect(screen.getByText("2 shown")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(unknown).toBeChecked();
+    expect(await screen.findByText("4 shown")).toBeInTheDocument();
   });
 
   it("filters PAO broadcast types independently of subjects and COMM", async () => {
@@ -146,21 +180,34 @@ describe("comm test category filters", () => {
       ],
     });
     renderPage();
-    const types = await screen.findByRole("group", { name: "PAO types" });
-    const subjects = screen.getByRole("group", { name: "PAO categories" });
-    expect(within(types).getByRole("button", { name: "PAO filler (1)" })).toBeInTheDocument();
-    fireEvent.click(within(types).getByRole("button", { name: "PAO filler (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "PAO types: All" }));
+    const types = screen.getByRole("group", { name: "PAO types" });
+    fireEvent.click(within(types).getByRole("checkbox", { name: "PAO filler, 1 entries" }));
     await waitFor(() =>
       expect(screen.queryByText("Coverage introduction.")).not.toBeInTheDocument()
     );
     expect(screen.getByText("Technical reply.")).toBeInTheDocument();
     expect(screen.getByText("Mission explanation.")).toBeInTheDocument();
-    fireEvent.click(within(subjects).getByRole("button", { name: "Mission background (2)" }));
-    await waitFor(() => expect(screen.queryByText("Mission explanation.")).not.toBeInTheDocument());
+    fireEvent.click(within(types).getByRole("button", { name: "None" }));
+    expect(screen.getByText("1 shown")).toBeInTheDocument();
+    expect(screen.getByText("Technical reply.")).toBeInTheDocument();
+    fireEvent.click(within(types).getByRole("button", { name: "Only PAO commentary" }));
+    fireEvent.click(within(types).getByRole("button", { name: "Done" }));
+    fireEvent.click(screen.getByRole("button", { name: "Categories: All" }));
+    const subjects = screen.getByRole("group", { name: "Categories" });
+    fireEvent.click(
+      within(subjects).getByRole("checkbox", { name: "Mission background, 2 entries" })
+    );
+    expect(screen.queryByText("Mission explanation.")).not.toBeInTheDocument();
     expect(screen.getByText("Systems explanation.")).toBeInTheDocument();
-    fireEvent.click(within(types).getByRole("button", { name: "Show all" }));
-    expect(screen.queryByText("Coverage introduction.")).not.toBeInTheDocument();
-    fireEvent.click(within(subjects).getByRole("button", { name: "Show all" }));
+    fireEvent.click(within(subjects).getByRole("button", { name: "Done" }));
+    fireEvent.click(screen.getByRole("switch", { name: "PAO" }));
+    expect(screen.getByRole("button", { name: "PAO types: PAO off" })).toBeDisabled();
+    expect(screen.queryByText("Systems explanation.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "PAO" }));
+    expect(screen.getByRole("button", { name: "PAO types: PAO commentary" })).toBeEnabled();
+    expect(await screen.findByText("Systems explanation.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
     expect(await screen.findByText("Coverage introduction.")).toBeInTheDocument();
     expect(screen.getByText("4 shown")).toBeInTheDocument();
   });

@@ -1,6 +1,7 @@
 import { JSX, useEffect, useMemo, useRef, useState } from "react";
 import { GroupedVirtuoso, type GroupedVirtuosoHandle } from "react-virtuoso";
 import styles from "./CommTest.module.css";
+import CommFilterPicker from "./CommFilterPicker.tsx";
 import type { CommEntry, PaoEntry } from "../types/transcripts.ts";
 import { loadEnrichedTranscripts } from "../data/comm.ts";
 import { loadVideoSync, videoPositions, type VideoSync } from "../data/videoSync.ts";
@@ -128,10 +129,7 @@ function CommTest(): JSX.Element {
   });
   const [showPao, setShowPao] = useState(true);
   const [hiddenPaoTypes, setHiddenPaoTypes] = useState<Set<string>>(new Set());
-  const [hiddenCategories, setHiddenCategories] = useState<Record<Row["kind"], Set<string>>>({
-    comm: new Set(),
-    pao: new Set(),
-  });
+  const [hiddenCategories, setHiddenCategories] = useState<Set<string>>(new Set());
   const listRef = useRef<GroupedVirtuosoHandle>(null);
 
   const [activeEntry, setActiveEntry] = useState<CommEntry | null>(null);
@@ -203,7 +201,7 @@ function CommTest(): JSX.Element {
   }, [entries]);
 
   const categoryCounts = useMemo(
-    () => ({ comm: countCategories(entries), pao: countCategories(paoEntries) }),
+    () => countCategories([...entries, ...paoEntries]),
     [entries, paoEntries]
   );
 
@@ -214,7 +212,7 @@ function CommTest(): JSX.Element {
       counts.set(type, (counts.get(type) ?? 0) + 1);
     }
     return [...counts.entries()].sort(([a], [b]) =>
-      PAO_TYPE_LABELS[a].localeCompare(PAO_TYPE_LABELS[b])
+      (PAO_TYPE_LABELS[a] ?? a).localeCompare(PAO_TYPE_LABELS[b] ?? b)
     );
   }, [paoEntries]);
 
@@ -239,7 +237,7 @@ function CommTest(): JSX.Element {
           (row.kind === "comm"
             ? visible[row.channel]
             : showPao && !hiddenPaoTypes.has(row.entry.pao_type ?? "unspecified")) &&
-          !hiddenCategories[row.kind].has(row.entry.category || "uncategorized")
+          !hiddenCategories.has(row.entry.category || "uncategorized")
       ),
     [chronological, visible, showPao, hiddenCategories, hiddenPaoTypes]
   );
@@ -260,17 +258,17 @@ function CommTest(): JSX.Element {
   }, [merged]);
   const groupCounts = useMemo(() => groups.map((group) => group.count), [groups]);
 
-  const timeRange = useMemo(() => {
-    if (entries.length === 0) return null;
-    return { first: formatTime(entries[0].t), last: formatTime(entries[entries.length - 1].t) };
-  }, [entries]);
+  const filtersActive =
+    hiddenCategories.size > 0 ||
+    hiddenPaoTypes.size > 0 ||
+    !showPao ||
+    Object.values(visible).some((value) => !value);
 
-  function toggleClass(ch: ChannelId): string {
-    const on = visible[ch];
-    if (ch === "OE-1") return on ? styles.toggleOE1Active : styles.toggleOE1Inactive;
-    if (ch === "OE-2") return on ? styles.toggleOE2Active : styles.toggleOE2Inactive;
-    if (ch === "PCD") return on ? styles.togglePCDActive : styles.togglePCDInactive;
-    return "";
+  function resetFilters() {
+    setVisible({ "OE-1": true, "OE-2": true, PCD: true, unknown: true });
+    setShowPao(true);
+    setHiddenCategories(new Set());
+    setHiddenPaoTypes(new Set());
   }
 
   function channelBadgeClass(ch: ChannelId): string {
@@ -282,7 +280,21 @@ function CommTest(): JSX.Element {
 
   return (
     <div className={styles.page}>
-      <h1 className={styles.heading}>Comm Test — Artemis II</h1>
+      <header className={styles.header}>
+        <div>
+          <div className={styles.eyebrow}>
+            Artemis II <span>/</span> Comm test
+          </div>
+          <h1 className={styles.heading}>Mission communications</h1>
+          <p className={styles.subtitle}>The conversations behind the mission.</p>
+        </div>
+        {!loading && !error && (
+          <div className={styles.archiveSummary}>
+            <strong>{(entries.length + paoEntries.length).toLocaleString()}</strong>
+            <span>transcript entries · all times UTC</span>
+          </div>
+        )}
+      </header>
 
       {activeEntry && (
         <div className={styles.playerBar}>
@@ -325,176 +337,127 @@ function CommTest(): JSX.Element {
 
       {!loading && !error && (
         <>
-          {/* Stats */}
-          <div className={styles.statsStrip}>
-            <div className={styles.statCard}>
-              <div className={styles.statBig}>{entries.length.toLocaleString()}</div>
-              <div className={styles.statLabel}>total entries</div>
-            </div>
-            {CHANNELS.map((ch) => (
-              <div key={ch} className={styles.statCard}>
-                <div className={styles.statBig}>{channelCounts[ch].toLocaleString()}</div>
-                <div className={styles.statLabel}>{ch} entries</div>
+          <section className={styles.filterBar} aria-label="Transcript filters">
+            <div className={styles.filterTop}>
+              <div className={styles.channels} role="group" aria-label="Channels">
+                <span className={styles.controlLabel}>Channels</span>
+                {[...CHANNELS, ...(channelCounts.unknown > 0 ? ["unknown" as const] : [])].map(
+                  (ch) => (
+                    <label key={ch} className={styles.channelSwitch}>
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        checked={visible[ch]}
+                        onChange={() => toggleChannel(ch)}
+                        aria-label={ch === "unknown" ? "Unknown channel" : ch}
+                      />
+                      <span className={channelBadgeClass(ch)}>
+                        {ch === "unknown" ? "Unknown" : ch}
+                      </span>
+                      <span className={styles.channelCount}>
+                        {channelCounts[ch].toLocaleString()}
+                      </span>
+                    </label>
+                  )
+                )}
+                <label className={styles.channelSwitch}>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={showPao}
+                    onChange={() => setShowPao((previous) => !previous)}
+                    aria-label="PAO"
+                  />
+                  <span className={styles.channelPao}>PAO</span>
+                  <span className={styles.channelCount}>{paoEntries.length.toLocaleString()}</span>
+                </label>
               </div>
-            ))}
-            <div className={styles.statCard}>
-              <div className={styles.statBig}>{paoEntries.length.toLocaleString()}</div>
-              <div className={styles.statLabel}>PAO entries</div>
+              <div className={styles.pickers}>
+                <CommFilterPicker
+                  label="Categories"
+                  description="One set of subjects for both COMM and PAO. Counts include all channels."
+                  options={categoryCounts.map(([value, count]) => ({
+                    value,
+                    count,
+                    label: categoryLabel(value),
+                  }))}
+                  hidden={hiddenCategories}
+                  onChange={setHiddenCategories}
+                />
+                <CommFilterPicker
+                  label="PAO types"
+                  description="Refine PAO within your selected categories. COMM entries are unaffected. Counts include all PAO."
+                  options={paoTypeCounts.map(([value, count]) => ({
+                    value,
+                    count,
+                    label: PAO_TYPE_LABELS[value] ?? value,
+                  }))}
+                  hidden={hiddenPaoTypes}
+                  onChange={setHiddenPaoTypes}
+                  disabled={!showPao}
+                />
+              </div>
             </div>
-            {timeRange && (
-              <div className={styles.statCard}>
-                <div className={styles.statLabel}>time range (UTC)</div>
-                <div className={styles.statBig} style={{ fontSize: "0.9rem" }}>
-                  {timeRange.first}
-                </div>
-                <div style={{ fontSize: "0.8rem", color: "#888888" }}>to {timeRange.last}</div>
+            <div className={styles.filterBottom}>
+              <p className={styles.filterHint}>
+                Categories apply across channels. PAO types refine PAO only.
+              </p>
+              <button
+                type="button"
+                className={styles.reset}
+                disabled={!filtersActive}
+                onClick={resetFilters}
+              >
+                Reset filters
+              </button>
+            </div>
+          </section>
+
+          <div className={styles.resultsBar}>
+            <div className={styles.resultsCount} role="status">
+              <strong>{merged.length.toLocaleString()} shown</strong>
+              <span> of {chronological.length.toLocaleString()} entries</span>
+            </div>
+            {groups.length > 0 && (
+              <div className={styles.dateNavigation}>
+                <label className={styles.controlLabel} htmlFor="transcript-date">
+                  Jump to date
+                </label>
+                <select
+                  id="transcript-date"
+                  className={styles.dateSelect}
+                  value=""
+                  onChange={(event) => {
+                    if (event.target.value !== "") {
+                      listRef.current?.scrollToIndex({
+                        index: Number(event.target.value),
+                        align: "start",
+                      });
+                    }
+                  }}
+                >
+                  <option value="">Select a date</option>
+                  {groups.map((group) => (
+                    <option key={group.date} value={group.firstIndex}>
+                      {group.date} ({group.count.toLocaleString()})
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
           </div>
 
-          {/* Channel toggles */}
-          <div className={styles.channelToggles}>
-            <span className={styles.toggleLabel}>Channels</span>
-            {CHANNELS.map((ch) => (
-              <div
-                key={ch}
-                className={`${styles.toggle} ${toggleClass(ch)}`}
-                role="button"
-                tabIndex={0}
-                aria-pressed={visible[ch]}
-                aria-label={`Toggle ${ch} ${visible[ch] ? "off" : "on"}`}
-                onClick={() => toggleChannel(ch)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    toggleChannel(ch);
-                  }
-                }}
-              >
-                {ch}
-              </div>
-            ))}
-            <div
-              className={`${styles.toggle} ${showPao ? styles.togglePaoActive : styles.togglePaoInactive}`}
-              role="button"
-              tabIndex={0}
-              aria-pressed={showPao}
-              aria-label={`Toggle PAO commentary ${showPao ? "off" : "on"}`}
-              onClick={() => setShowPao((v) => !v)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setShowPao((v) => !v);
-                }
-              }}
-            >
-              PAO
-            </div>
-            <span className={styles.toggleLabel} style={{ marginLeft: "0.5rem" }}>
-              {merged.length.toLocaleString()} shown
-            </span>
-          </div>
-
-          {(["comm", "pao"] as const).map((kind) => (
-            <div
-              key={kind}
-              className={styles.channelToggles}
-              role="group"
-              aria-label={`${kind === "comm" ? "Comm" : "PAO"} categories`}
-            >
-              <span className={styles.toggleLabel}>
-                {kind === "comm" ? "Comm" : "PAO"} categories
-              </span>
-              <button
-                type="button"
-                className={`${styles.toggle} ${styles.categoryActive}`}
-                onClick={() =>
-                  setHiddenCategories((previous) => ({ ...previous, [kind]: new Set() }))
-                }
-              >
-                Show all
-              </button>
-              {categoryCounts[kind].map(([category, count]) => (
-                <button
-                  key={category}
-                  type="button"
-                  className={`${styles.toggle} ${hiddenCategories[kind].has(category) ? styles.categoryInactive : styles.categoryActive}`}
-                  aria-pressed={!hiddenCategories[kind].has(category)}
-                  onClick={() =>
-                    setHiddenCategories((previous) => {
-                      const next = new Set(previous[kind]);
-                      if (next.has(category)) next.delete(category);
-                      else next.add(category);
-                      return { ...previous, [kind]: next };
-                    })
-                  }
-                >
-                  {categoryLabel(category)} ({count.toLocaleString()})
-                </button>
-              ))}
-            </div>
-          ))}
-
-          <div className={styles.channelToggles} role="group" aria-label="PAO types">
-            <span className={styles.toggleLabel}>PAO types</span>
-            <button
-              type="button"
-              className={`${styles.toggle} ${styles.categoryActive}`}
-              onClick={() => setHiddenPaoTypes(new Set())}
-            >
-              Show all
-            </button>
-            {paoTypeCounts.map(([type, count]) => (
-              <button
-                key={type}
-                type="button"
-                className={`${styles.toggle} ${hiddenPaoTypes.has(type) ? styles.categoryInactive : styles.categoryActive}`}
-                aria-pressed={!hiddenPaoTypes.has(type)}
-                onClick={() =>
-                  setHiddenPaoTypes((previous) => {
-                    const next = new Set(previous);
-                    if (next.has(type)) next.delete(type);
-                    else next.add(type);
-                    return next;
-                  })
-                }
-              >
-                {PAO_TYPE_LABELS[type]} ({count.toLocaleString()})
-              </button>
-            ))}
-          </div>
-
-          {groups.length > 0 && (
-            <div className={styles.channelToggles}>
-              <label className={styles.toggleLabel} htmlFor="transcript-date">
-                Jump to date
-              </label>
-              <select
-                id="transcript-date"
-                className={styles.dateSelect}
-                value=""
-                onChange={(event) => {
-                  if (event.target.value !== "") {
-                    listRef.current?.scrollToIndex({
-                      index: Number(event.target.value),
-                      align: "start",
-                    });
-                  }
-                }}
-              >
-                <option value="">Select a date</option>
-                {groups.map((group) => (
-                  <option key={group.date} value={group.firstIndex}>
-                    {group.date} ({group.count.toLocaleString()})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
           {/* Transcript list */}
           {merged.length === 0 ? (
-            <div className={styles.empty}>No entries match the selected filters.</div>
+            <div className={styles.empty}>
+              <h2>No transmissions in this view</h2>
+              <p>
+                Try another category, enable a channel, or reset your filters to see everything.
+              </p>
+              <button type="button" className={styles.emptyReset} onClick={resetFilters}>
+                Reset filters
+              </button>
+            </div>
           ) : (
             <GroupedVirtuoso
               ref={listRef}
@@ -506,7 +469,9 @@ function CommTest(): JSX.Element {
               groupContent={(index) => (
                 <h2 className={styles.fdHeading}>
                   {groups[index].date}{" "}
-                  <span className={styles.fdCount}>({groups[index].count})</span>
+                  <span className={styles.fdCount}>
+                    {groups[index].count.toLocaleString()} entries
+                  </span>
                 </h2>
               )}
               itemContent={(index) => {
