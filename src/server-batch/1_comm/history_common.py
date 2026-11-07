@@ -1,19 +1,15 @@
-"""Persistence and model requests shared by the post-1d history stages.
-
-These stages never modify 1d's append-only ledger or publish into web/.
-"""
+"""Persistence, artifact manifests and HGX requests shared by transcript stages."""
 from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
-import importlib
 import json
 import os
 from pathlib import Path
 
-enrich = importlib.import_module("1_comm.1d_enrich_transcripts")
+import transcript_common as transcript
 
 
 def now() -> str:
@@ -86,34 +82,36 @@ def stage_lock(root: Path):
 
 
 def add_model_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--backend", choices=["hgx", "strata"], default="hgx")
+    parser.add_argument("--backend", choices=["hgx"], default="hgx")
     parser.add_argument("--model", default=None)
     parser.add_argument("--reasoning-effort", choices=["auto", "low", "medium", "high"], default="low")
     parser.add_argument("--max-tokens", type=int, default=16384)
     parser.add_argument("--hide-reasoning", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--limit", type=int, help="Process at most N pending work items; resumable, not a complete export")
-    parser.add_argument("--retry-unresolved", action="store_true", help="Retry previously exhausted work items")
 
 
 class ModelClient:
     def __init__(self, args, diagnostic_dir: Path):
         self.args = args
         self.diagnostic_dir = diagnostic_dir
-        endpoint, _, model = enrich.llm_settings(args.backend, args.model)
+        endpoint, _, model = transcript.llm_settings(args.backend, args.model)
         self.settings = {"backend": args.backend, "endpoint": endpoint, "model": model,
                          "reasoning_effort": args.reasoning_effort, "max_tokens": args.max_tokens,
                          "temperature": 0.1}
 
-    def request(self, system: str, prompt: str, key: str) -> str:
+    def request(self, system: str, prompt: str, key: str, response_format: dict | None = None) -> str:
         details = {"requested_at": now(), "settings": self.settings,
                    "system_prompt": system, "user_prompt": prompt}
+        if response_format is not None:
+            details["response_format"] = response_format
         try:
-            _, content, stats = enrich.stream_llm_assessment(
+            _, content, stats = transcript.stream_llm_assessment(
                 prompt, backend=self.args.backend, model=self.args.model,
                 reasoning_effort=self.args.reasoning_effort, max_tokens=self.args.max_tokens,
                 temperature=0.1, quiet=self.args.quiet, hide_reasoning=self.args.hide_reasoning,
                 system_prompt=system, output_format="JSON", diagnostics=details,
+                **({"response_format": response_format} if response_format is not None else {}),
             )
             details.update(content=content, stats=stats)
             if stats.get("finish_reason") != "stop" or not stats.get("done_received") or details.get("stream_issues"):
@@ -183,3 +181,13 @@ def require_artifacts(root: Path) -> dict:
         if file_digest(root / name) != checksum:
             raise RuntimeError(f"Artifact changed since its manifest was written: {root / name}")
     return report
+
+
+def require_reviewed_history(mission) -> tuple[Path, dict]:
+    """Use canonical verified history; upstream manifests must still match."""
+    report = require_artifacts(mission.transcript_investigation)
+    discovery = require_artifacts(mission.transcript_discovery)
+    if (report["discovery_snapshot"] != discovery["snapshot"]
+            or report["discovery_artifacts"] != discovery["artifacts"]):
+        raise RuntimeError("Discovery changed since investigation; rerun 1f before building or publishing the hierarchy")
+    return mission.transcript_investigation, report

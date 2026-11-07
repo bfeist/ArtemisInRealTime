@@ -4,6 +4,8 @@ export interface TranscriptAssessment {
   tags?: string[];
   topic?: string;
   event_id?: string;
+  source?: "PAO" | "OE-1" | "OE-2" | "PCD" | "unknown";
+  statement_kinds?: string[];
 }
 
 export interface PaoEntry extends TranscriptAssessment {

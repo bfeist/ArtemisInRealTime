@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import MISSIONS, MissionConfig  # noqa: E402
-from history_common import require_artifacts, atomic_json, stage_lock  # noqa: E402
+from history_common import require_reviewed_history, atomic_json, stage_lock  # noqa: E402
 from mission_context import (  # noqa: E402
     CREW_INFO,
     CREW_SLUGS,
@@ -517,14 +517,9 @@ def _validate_hierarchy(blocks, days, utterances, milestones):
 def build_mission_activity_hierarchy(mission: MissionConfig) -> dict:
     """Assemble evidence chronology and linked report context without re-investigating 1f."""
     ctx = MissionContextIndex(mission)
-    history_root = mission.transcript_investigation
-    investigation_report = require_artifacts(history_root)
-    recovery_report = require_artifacts(mission.transcript_recovery)
-    if (investigation_report["recovery_snapshot"] != recovery_report["snapshot"]
-            or investigation_report["recovery_artifacts"] != recovery_report["artifacts"]):
-        raise RuntimeError("Recovery changed since investigation; rerun 1f before 1g")
+    history_root, investigation_report = require_reviewed_history(mission)
     by_uid = {r["uid"]: {**r, "ts": _parse_ts(r["t"])} for r in _load_jsonl(history_root / "utterances.jsonl") if r.get("uid")}
-    utterances = sorted((r for r in by_uid.values() if r.get("label_review", {}).get("status") == "reviewed"), key=lambda r: r["ts"])
+    utterances = sorted(by_uid.values(), key=lambda r: r["ts"])
     raw_milestones = _load_jsonl(history_root / "milestones.jsonl")
     if any(m.get("verification") not in {"supported", "corrected"} for m in raw_milestones):
         raise RuntimeError("1g accepts only source-investigated milestones")
@@ -615,7 +610,7 @@ def build_mission_activity_hierarchy(mission: MissionConfig) -> dict:
                    for b in blocks for entry in b["crew_activities"][slug]]
         entries.sort(key=lambda e: (_parse_ts(e["start_utc"]), e["activity"]))
         crew_timelines[slug] = {**CREW_INFO[slug], "activity_count": len(entries), "timeline": entries}
-    if require_artifacts(history_root) != investigation_report or require_artifacts(mission.transcript_recovery) != recovery_report:
+    if require_reviewed_history(mission) != (history_root, investigation_report):
         raise RuntimeError("History inputs changed while building hierarchy; retry after preceding stages finish")
     return {
         "schema_version": 2, "mission_id": mission.slug, "mission_name": mission.name,
@@ -623,8 +618,8 @@ def build_mission_activity_hierarchy(mission: MissionConfig) -> dict:
         "sources": {
             "preflight_planned_pdf": "pdfs/artemis-ii-overview-timeline-public-final.pdf (as-planned, not as-executed)",
             "science_report_pdf": "pdfs/Artemis II_Preliminary Science Report.pdf (retrospective evidence)",
-            "enriched_transcripts": "1f_investigation/utterances.jsonl",
-            "detected_milestones": "1f_investigation/milestones.jsonl",
+            "enriched_transcripts": history_root.name + "/utterances.jsonl",
+            "detected_milestones": history_root.name + "/milestones.jsonl",
             "investigation_snapshot": investigation_report["snapshot"],
             "investigation_artifacts": investigation_report["artifacts"],
         },

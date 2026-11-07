@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import MISSIONS, MissionConfig  # noqa: E402
-from history_common import atomic_json, file_digest, require_artifacts, stage_lock  # noqa: E402
+from history_common import atomic_json, file_digest, require_reviewed_history, stage_lock  # noqa: E402
 
 SCHEMA_VERSION = 1
 BLOCK_FIELDS = (
@@ -125,18 +125,14 @@ def build_assets(tree: dict) -> tuple[dict, dict[str, bytes]]:
 
 
 def checked_inputs(mission: MissionConfig, tree: dict) -> tuple[dict, dict]:
-    investigation = require_artifacts(mission.transcript_investigation)
-    recovery = require_artifacts(mission.transcript_recovery)
+    history_root, investigation = require_reviewed_history(mission)
     sources = tree["sources"]
     if (sources["investigation_snapshot"] != investigation["snapshot"]
             or sources["investigation_artifacts"] != investigation["artifacts"]):
         raise RuntimeError("Investigation changed since hierarchy; rerun 1g before 1h")
-    if (investigation["recovery_snapshot"] != recovery["snapshot"]
-            or investigation["recovery_artifacts"] != recovery["artifacts"]):
-        raise RuntimeError("Recovery changed since investigation; rerun 1f and 1g before 1h")
     if tree["mission_id"] != mission.slug:
         raise ValueError("Hierarchy belongs to a different mission")
-    return investigation, recovery
+    return investigation, {"source_stage": history_root.name}
 
 
 def write_bytes(path: Path, payload: bytes) -> None:

@@ -164,49 +164,37 @@ uv run run_all.py --mission artemis-ii --step photos-refresh
 # ledger and web output.  Run when IO adds new records or corrects timestamps.
 uv run run_all.py --mission artemis-ii --step io-refresh
 
-# After 1d finishes (even with rejected rows): recover, investigate, build and publish timeline.
+# Classify, discover, verify, build and publish transcript history.
 uv run run_all.py --mission artemis-ii --step comm-history --hide-reasoning
 ```
 
 `--list` shows all available groups alongside individual steps.
 
-Communications history now runs **1d → 1e (recovery) → 1f (source investigation)
-→ 1g (hierarchy) → 1h (web timeline)**. The `comm-history` group starts at 1e, preserving completed
-1d work. Use `--source-run RUN_ID` to recover a specific diagnostics run. All
-enriched/history outputs live under `processed/transcripts`, including the
-enriched CSVs. Step 1h publishes the complete activity hierarchy to
-`web/timeline.json` for mission/global state, plus four optional crew tracks
-under `web/timeline/crew/`. The existing comm web data supplies transcripts
-and playback. See the
-[communications pipeline](1_comm/README.md#post-enrichment-history-pipeline-1e--1f--1g--1h)
-for artifacts, resumption, investigation sources and limited trial runs.
-To start recovery alongside an active 1d, select only `--step 1e` and add
-`--follow --source-run RUN_ID`. Recovery uses completed batches and separate
-output files; downstream investigation/hierarchy still wait for completion.
+Communications history runs **1d (classification) ? 1e (discovery) ?
+1f (source verification) ? 1g (hierarchy) ? 1h (timeline) ? 1i (transcripts)**.
+The `comm-history` group includes every stage and resumes validated work by
+default. Classification uses HGX, `LLM-Alpha-512K` (GLM-5.3-Flash), low reasoning
+and a constrained JSON schema. Event discovery and verification consume these
+labels without routinely classifying the utterances again.
 
-History data is grouped by processing step:
+After source transcription/import, run from the repository root:
 
-```text
-processed/transcripts/
-  1d_enrichment/      # Original ledger, candidate milestones, CSVs, diagnostics
-  1e_recovery/        # Recovered source rows, repair checkpoints and requests
-  1f_investigation/   # Investigated history, source cache, checkpoints and requests
-  1g_hierarchy/       # mission_activity_tree.json and mission_activities.json
-  1h_web_timeline/    # Publication size report; public timeline.json + timeline/crew/
-  comm/              # Source transcripts from the comm import/transcription stages
-  pds/               # Supplied PDS transcript inputs
-  yt/                # YouTube transcript processing
+```powershell
+uv run --directory src/server-batch run_all.py --mission artemis-ii --step 1c 2k comm-history --backend hgx --model LLM-Alpha-512K --reasoning-effort low
 ```
 
-For an existing completed legacy dataset, stop history processing and run
-`uv run migrate_transcript_history.py --mission artemis-ii` to preview, then add
-`--apply`. This moves the data, rebases checkpoint identities and stored paths,
-and verifies the original artifact hashes. It stages superseded runs, backups,
-and obsolete request attempts in `_delete_obsolete_history/` for deletion after
-verification. The receipt is saved under `processed/transcript-history-cleanup/`.
-Current unresolved investigations remain part of the retained dataset.
-For nondefault original batching/retrieval settings, pass the migration's
-corresponding flags; newer snapshots record those settings themselves.
+Stages 1c and 2k prepare the source CSVs under `processed/transcripts/inputs`.
+The ordinary all-steps run also prepares both inputs before classification.
+Processing outputs live under `1d_enrichment`, `1e_discovery`, `1f_investigation`,
+`1g_hierarchy`, `1h_web_timeline` and `1i_web_transcripts` in
+`processed/transcripts`. Each model stage checkpoints validated work promptly;
+incomplete runs stop before downstream publication. Repeat the same command to
+resume. `--history-limit N` limits pending work; `--retry-unresolved` explicitly
+retries exhausted event investigations in 1f. Existing completed assets and
+research are not moved or migrated by this refactor.
+
+See the [communications pipeline](1_comm/README.md#transcript-classification-and-verified-history)
+for stage responsibilities, manifests, semantic validation and fixture tests.
 
 ## Running an individual script directly
 
@@ -266,6 +254,10 @@ uv run run_all.py --mission artemis-ii --list
 | 1a   | Download comm audio ZIPs         | artemis-ii |
 | 1b   | Transcribe comm audio (WhisperX) | artemis-ii |
 | 1c   | Produce web-ready comm JSON      | artemis-ii |
+| 1d   | Classify transcripts with constrained HGX schema | artemis-ii |
+| 1e   | Discover candidate events without changing labels | artemis-ii |
+| 1f   | Verify candidate events against original sources | artemis-ii |
+| 1g   | Build mission hierarchy from verified history | artemis-ii |
 | 1h   | Publish compact mission timeline after 1g | artemis-ii |
 | 1i   | Publish enriched comm/PAO transcripts and categories without model requests | artemis-ii |
 

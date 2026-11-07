@@ -22,6 +22,10 @@ class MissionHierarchyTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.mission = MissionConfig("Test", "test", "2026-04-01", "2026-04-12", "test",
                                      launch_utc="2026-04-01T22:35:12Z")
+        for key in ("BULK_ASSETS_DIR", "PDS_ASSETS_DIR", "YT_VIDEO_DIR"):
+            storage = patch("config." + key, Path(temporary.name) / key)
+            storage.start()
+            self.addCleanup(storage.stop)
         self.mission.ensure_dirs()
         self.root = self.mission.processed_transcripts
 
@@ -43,12 +47,12 @@ class MissionHierarchyTest(unittest.TestCase):
                 "start_ts": hierarchy._parse_ts(start), "end_ts": hierarchy._parse_ts(end)}
 
     def build(self, rows, events=(), plans=()):
-        recovery = self.mission.transcript_recovery
+        recovery = self.mission.transcript_discovery
         common.publish(recovery, rows, events, {"complete": True, "snapshot": "recovery"})
         recovery_report = common.require_artifacts(recovery)
         common.publish(self.mission.transcript_investigation, rows, events,
-                       {"complete": True, "snapshot": "investigation", "recovery_snapshot": "recovery",
-                        "recovery_artifacts": recovery_report["artifacts"], "unresolved_events": 0,
+                       {"complete": True, "snapshot": "investigation", "discovery_snapshot": "recovery",
+                        "discovery_artifacts": recovery_report["artifacts"], "unresolved_events": 0,
                         "unresolved_labels": 0})
         context = SimpleNamespace(events=[], crew_photos=[], planned_blocks=list(plans))
         with patch.object(hierarchy, "MissionContextIndex", return_value=context):

@@ -1,7 +1,6 @@
 """Publish enriched comm/PAO for the transcript viewer without running models.
 
-Prefer investigated (1f), then recovered (1e), then original (1d) assessments.
-Keep unassessed utterances and take text/timing/audio from current source inputs.
+Read canonical classifications (1d); take text/timing/audio from current source inputs.
 The enriched CSV projections and all model diagnostics remain processing files.
 """
 from __future__ import annotations
@@ -15,31 +14,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import MISSIONS, MissionConfig
-from history_common import enrich, file_digest, read_jsonl, require_artifacts, stage_lock
+from history_common import transcript, file_digest, read_jsonl, require_artifacts, stage_lock
 from shared.pds import atomic_json
 
-ASSESSMENT_FIELDS = ("importance", "category", "tags", "topic", "event_id")
+ASSESSMENT_FIELDS = ("importance", "category", "tags", "topic", "event_id", "statement_kinds")
 
 
 def publish_transcripts(mission: MissionConfig) -> dict:
     root = mission.processed_transcripts / "1i_web_transcripts"
     with stage_lock(root):
-        for source in (mission.transcript_investigation, mission.transcript_recovery):
-            if (source / "report.json").exists():
-                manifest = require_artifacts(source)
-                ledger_path = source / "utterances.jsonl"
-                break
-        else:
-            source = mission.transcript_enrichment
-            ledger_path = source / "enriched_utterances.jsonl"
-            manifest = None
-        if not ledger_path.exists():
-            raise RuntimeError("Run transcript enrichment (1d) before publishing transcripts")
+        source = mission.transcript_enrichment
+        manifest = require_artifacts(source)
+        ledger_path = source / "utterances.jsonl"
 
         inputs = [ledger_path, mission.transcript_input("comm.csv"),
                   mission.transcript_input("PAO.csv"), mission.web_dir / "comm.json"]
         checksums = {str(path): file_digest(path) for path in inputs}
-        # Last assessment wins in 1d's append-only ledger.
         ledger = {row["uid"]: row for row in read_jsonl(ledger_path)}
         structured_path = mission.web_dir / "comm.json"
         structured = json.loads(structured_path.read_text(encoding="utf-8")) if structured_path.exists() else []
@@ -47,8 +37,9 @@ def publish_transcripts(mission: MissionConfig) -> dict:
                     for row in structured}
         result = {"schema_version": 1, "source_stage": source.name, "comm": [], "pao": []}
         assessed = 0
-        for utterance in enrich.load_all_utterances(mission):
-            row = {"t": utterance["t"], "text": utterance["text"]}
+        for utterance in transcript.load_all_utterances(mission):
+            row = {"t": utterance["t"], "text": utterance["text"],
+                   "source": transcript.transcript_source(utterance)}
             if utterance["channel"] == "comm":
                 row.update(s=float(utterance["s"]), d=float(utterance["d"]), src=utterance["src"])
                 speaker = speakers.get((row["t"], row["src"], row["s"]))
@@ -67,7 +58,7 @@ def publish_transcripts(mission: MissionConfig) -> dict:
             raise RuntimeError("Refusing to publish empty transcripts")
         if checksums != {str(path): file_digest(path) for path in inputs}:
             raise RuntimeError("Transcript inputs changed during publication; rerun 1i")
-        if manifest is not None and require_artifacts(source) != manifest:
+        if require_artifacts(source) != manifest:
             raise RuntimeError("Assessments changed during publication; rerun 1i")
         atomic_json(mission.web_dir / "transcripts.json", result)
         report = {"source_stage": source.name, "input_hashes": checksums,

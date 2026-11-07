@@ -20,6 +20,10 @@ const COLORS: Record<string, string> = {
   photography: "#8cdbac",
   crew_life: "#f2bd7b",
   media_event: "#f09ab8",
+  communications: "#82cdd6",
+  mission_background: "#9eaec2",
+  social: "#d0b0c2",
+  unspecified: "#9eaec2",
   pao_commentary: "#9eaec2",
   pao_filler: "#9eaec2",
 };

@@ -27,6 +27,10 @@ class WebTimelineTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.mission = MissionConfig("Test", "test", "2026-04-01", "2026-04-12", "test",
                                      launch_utc="2026-04-01T22:35:12Z")
+        for key in ("BULK_ASSETS_DIR", "PDS_ASSETS_DIR", "YT_VIDEO_DIR"):
+            storage = patch("config." + key, Path(temporary.name) / key)
+            storage.start()
+            self.addCleanup(storage.stop)
         self.mission.ensure_dirs()
         start = datetime(2026, 4, 1, 23, tzinfo=timezone.utc)
         rows = [{
@@ -43,11 +47,11 @@ class WebTimelineTest(unittest.TestCase):
             "verification": "supported", "status": "completed", "crew": rows[i]["crew"],
             "claims": [{"claim": "PRIVATE investigation claim"}], "candidate_ids": [f"candidate:{i}"],
         } for i in range(2)]
-        common.publish(self.mission.transcript_recovery, rows, events, {"complete": True, "snapshot": "recovery"})
-        recovery = common.require_artifacts(self.mission.transcript_recovery)
+        common.publish(self.mission.transcript_discovery, rows, events, {"complete": True, "snapshot": "recovery"})
+        recovery = common.require_artifacts(self.mission.transcript_discovery)
         common.publish(self.mission.transcript_investigation, rows, events, {
-            "complete": True, "snapshot": "investigation", "recovery_snapshot": "recovery",
-            "recovery_artifacts": recovery["artifacts"], "unresolved_events": 1, "unresolved_labels": 0,
+            "complete": True, "snapshot": "investigation", "discovery_snapshot": "recovery",
+            "discovery_artifacts": recovery["artifacts"], "unresolved_events": 1, "unresolved_labels": 0,
         })
         plan = {
             "id": "plan-1", "flight_day": "FD01", "title": "Science block", "phase": "Outbound",
@@ -174,7 +178,7 @@ class WebTimelineTest(unittest.TestCase):
     def test_runner_includes_publication_after_hierarchy(self):
         steps = [item[0] for item in runner.STEPS]
         self.assertEqual(steps[steps.index("1g") + 1], "1h")
-        self.assertEqual(runner.STEP_GROUPS["comm-history"], ["1e", "1f", "1g", "1h", "1i"])
+        self.assertEqual(runner.STEP_GROUPS["comm-history"], ["1d", "1e", "1f", "1g", "1h", "1i"])
 
 
 if __name__ == "__main__":

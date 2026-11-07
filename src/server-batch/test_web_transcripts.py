@@ -20,6 +20,10 @@ class WebTranscriptsTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.mission = MissionConfig("Test", "test", "2026-04-01", "2026-04-12", "test")
+        for key in ("BULK_ASSETS_DIR", "PDS_ASSETS_DIR", "YT_VIDEO_DIR"):
+            storage = patch("config." + key, Path(temporary.name) / key)
+            storage.start()
+            self.addCleanup(storage.stop)
         self.mission.ensure_dirs()
         self.mission.transcript_inputs.mkdir(parents=True)
         (self.mission.transcript_inputs / "comm.csv").write_text(
@@ -32,10 +36,10 @@ class WebTranscriptsTest(unittest.TestCase):
             "t": "2026-04-01T18:00:00Z", "s": 3, "d": 2, "src": "pcd/test.m4a",
             "speaker": "Koch", "text": "A | B",
         }])
-        self.utterances = common.enrich.load_all_utterances(self.mission)
+        self.utterances = common.transcript.load_all_utterances(self.mission)
         self.record = {**self.utterances[0], "category": "science", "importance": 4,
                        "topic": "Observation", "tags": ["moon"], "model_provenance": "private"}
-        common.atomic_jsonl(self.mission.transcript_enrichment / "enriched_utterances.jsonl", [self.record])
+        common.publish(self.mission.transcript_enrichment, [self.record], [], {"complete": True})
 
     def read(self):
         return json.loads((self.mission.web_dir / "transcripts.json").read_text(encoding="utf-8"))
@@ -51,17 +55,27 @@ class WebTranscriptsTest(unittest.TestCase):
         self.assertNotIn("model_provenance", row)
         self.assertNotIn("category", payload["pao"][0])
 
-    def test_reviewed_labels_override_original_assessments(self):
+    def test_canonical_labels_are_published(self):
         reviewed = {**self.record, "category": "systems"}
-        common.publish(self.mission.transcript_investigation, [reviewed], [], {"complete": True})
+        common.publish(self.mission.transcript_enrichment, [reviewed], [], {"complete": True})
         web.publish_transcripts(self.mission)
         self.assertEqual(self.read()["comm"][0]["category"], "systems")
 
-    def test_invalid_reviewed_artifact_cannot_replace_existing_publication(self):
+    def test_publication_keeps_source_and_contribution_independent_of_subject(self):
+        record = {**self.record, "category": "systems", "importance": 1,
+                  "statement_kinds": ["acknowledgment"], "thread_context": [{"subject": "Camera power"}]}
+        common.publish(self.mission.transcript_enrichment, [record], [], {"complete": True})
+        web.publish_transcripts(self.mission)
+        row = self.read()["comm"][0]
+        self.assertEqual((row["source"], row["category"], row["statement_kinds"]),
+                         ("PCD", "systems", ["acknowledgment"]))
+        self.assertNotIn("thread_context", row)
+
+    def test_invalid_canonical_artifact_cannot_replace_existing_publication(self):
         web.publish_transcripts(self.mission)
         before = (self.mission.web_dir / "transcripts.json").read_bytes()
-        common.publish(self.mission.transcript_investigation, [self.record], [], {"complete": True})
-        (self.mission.transcript_investigation / "comm_enriched.csv").write_text("tampered")
+        common.publish(self.mission.transcript_enrichment, [self.record], [], {"complete": True})
+        (self.mission.transcript_enrichment / "comm_enriched.csv").write_text("tampered")
         with self.assertRaisesRegex(RuntimeError, "Artifact changed"):
             web.publish_transcripts(self.mission)
         self.assertEqual((self.mission.web_dir / "transcripts.json").read_bytes(), before)

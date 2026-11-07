@@ -8,9 +8,9 @@ import sqlite3
 from pathlib import Path
 
 if __package__:
-    from .history_common import digest, enrich, file_digest, atomic_json
+    from .history_common import digest, transcript, file_digest, atomic_json
 else:
-    from history_common import digest, enrich, file_digest, atomic_json
+    from history_common import digest, transcript, file_digest, atomic_json
 
 
 def reference_pdfs():
@@ -26,7 +26,8 @@ class SourceIndex:
         self.warnings = []
         for u in utterances:
             self.add({"id": "u:" + u["uid"], "uid": u["uid"], "t": u["t"],
-                      "ts": u["ts"], "channel": u["channel"], "kind": "transcript",
+                      "ts": u["ts"], "channel": u["channel"], "source": transcript.transcript_source(u),
+                      "src": u.get("src", ""), "kind": "transcript",
                       "text": u["text"], "origin": "comm.csv" if u["channel"] == "comm" else "PAO.csv",
                       "planned_only": False})
         for event in context.events:
@@ -45,7 +46,7 @@ class SourceIndex:
                 if not photo.get("date"):
                     continue
                 self.add({"id": "photo:" + str(photo["id"]), "t": photo["date"],
-                          "ts": enrich.parse_utc_ts(photo["date"]), "kind": "caption",
+                          "ts": transcript.parse_utc_ts(photo["date"]), "kind": "caption",
                           "planned_only": False, "text": f"{photo.get('title', '')}\n{photo.get('description', '')}",
                           "origin": "photos.json:" + str(photo["id"])})
         for path in extra_paths:
@@ -57,7 +58,7 @@ class SourceIndex:
                         or doc.get("kind") not in {"transcript", "reference", "caption"}
                         or type(doc.get("planned_only")) is not bool):
                     raise ValueError(f"Invalid reference JSONL record in {path}")
-                self.add({**doc, "id": "extra:" + doc["id"], "ts": enrich.parse_utc_ts(doc["t"])})
+                self.add({**doc, "id": "extra:" + doc["id"], "ts": transcript.parse_utc_ts(doc["t"])})
         if pdf_paths:
             import pypdf
             import fontTools
@@ -82,7 +83,7 @@ class SourceIndex:
                               "document": str(path), "page": number, "origin": f"{path}#page={number}",
                               "time_basis": "undated document page; NOT an event timestamp"})
         for candidate in candidates:
-            self.add({"id": candidate["id"], "t": candidate["t"], "ts": enrich.parse_utc_ts(candidate["t"]),
+            self.add({"id": candidate["id"], "t": candidate["t"], "ts": transcript.parse_utc_ts(candidate["t"]),
                       "kind": "candidate", "planned_only": False, "text": json.dumps(candidate, ensure_ascii=False),
                       "origin": "unverified 1e output; NOT evidence"})
         self.identity = digest(sorted(self.docs.values(), key=lambda d: d["id"]))
@@ -95,8 +96,9 @@ class SourceIndex:
         self.channel_rows = {}
         self.locations = {}
         for u in utterances:
-            group = self.channel_rows.setdefault(u["channel"], [])
-            self.locations["u:" + u["uid"]] = (u["channel"], len(group))
+            source = transcript.transcript_source(u)
+            group = self.channel_rows.setdefault(source, [])
+            self.locations["u:" + u["uid"]] = (source, len(group))
             group.append("u:" + u["uid"])
 
     def add(self, doc):
@@ -112,8 +114,8 @@ class SourceIndex:
             return []
         match = " OR ".join('"' + t + '"' for t in tokens)
         found = self.db.execute("SELECT id FROM sources WHERE sources MATCH ? ORDER BY bm25(sources)", (match,))
-        lower = enrich.parse_utc_ts(start) if start else float("-inf")
-        upper = enrich.parse_utc_ts(end) if end else float("inf")
+        lower = transcript.parse_utc_ts(start) if start else float("-inf")
+        upper = transcript.parse_utc_ts(end) if end else float("inf")
         docs = []
         for (sid,) in found:
             doc = self.docs[sid]
@@ -140,7 +142,7 @@ class SourceIndex:
         return [self.docs[s] for s in ids[max(0, index - min(15, max(0, before))):index + min(15, max(0, after)) + 1]]
 
     def window(self, start: str, end: str, offset=0, limit=30) -> dict:
-        lo, hi = enrich.parse_utc_ts(start), enrich.parse_utc_ts(end)
+        lo, hi = transcript.parse_utc_ts(start), transcript.parse_utc_ts(end)
         if hi < lo or offset < 0:
             raise ValueError("Invalid window or offset")
         left, right = bisect.bisect_left(self.times, lo), bisect.bisect_right(self.times, hi)
