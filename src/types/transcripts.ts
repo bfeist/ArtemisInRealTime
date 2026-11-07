@@ -12,6 +12,13 @@ export interface PaoEntry extends TranscriptAssessment {
   t: string;
   text: string;
   pao_type?: "commentary" | "filler" | "other";
+  playback?: {
+    source: string;
+    recordingId: string;
+    feed: string;
+    audio?: { src: string; s: number; d: number };
+    video?: { id: string; s: number; d: number; mappingId: string };
+  };
 }
 
 export interface CommEntry extends PaoEntry {
@@ -25,6 +32,8 @@ export interface CommEntry extends PaoEntry {
 export interface EnrichedTranscripts {
   comm: CommEntry[];
   pao: PaoEntry[];
+  /** Resolved once by the loader so playback uses the same immutable release as its text. */
+  assetBase?: string;
 }
 
 export function transcriptLabel(entry: CommEntry): string {

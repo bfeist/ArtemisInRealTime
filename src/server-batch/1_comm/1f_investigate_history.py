@@ -19,6 +19,7 @@ from history_common import (ModelClient, add_model_arguments, atomic_json, atomi
                             transcript, file_digest, now, publish, read_jsonl, require_artifacts, stage_lock)
 from history_sources import SourceIndex, reference_pdfs
 from transcript_stages import CREW, MILESTONE_STATUSES, future_countdown, epistemic_hint
+from assessment_reuse import validate_plan
 
 INVESTIGATION_VERSION = 3
 INVESTIGATOR_PROMPT = """You investigate an Artemis II mission history against original sources.
@@ -313,6 +314,8 @@ def run_investigations(mission, args, client=None) -> dict:
         index = SourceIndex(transcript.load_all_utterances(mission), context, mission,
                             candidates, args.reference_jsonl, pdfs)
         try:
+            if client is None:
+                validate_plan(args, records, "1f")
             client = client or ModelClient(args, root / "requests")
             identity = digest([INVESTIGATION_VERSION, discovery["snapshot"], discovery["artifacts"],
                                inputs, index.identity, client.settings, args.max_rounds, INVESTIGATOR_PROMPT])
@@ -335,9 +338,19 @@ def run_investigations(mission, args, client=None) -> dict:
                     index.add(doc)
                     index.db.execute("INSERT INTO sources VALUES (?, ?)", (doc["id"], doc["text"]))
             done, errors, used = {}, [], 0
+            cache = root / "dependency_cache"
+            cache.mkdir(parents=True, exist_ok=True)
+            # Searches are mission-wide, so the searchable corpus is an actual
+            # dependency, including potentially contradictory newly added evidence.
+            corpus = digest(sorted((sid, {k: v for k, v in doc.items() if k not in
+                {"path", "origin", "url", "document", "src", "s", "d"}}) for sid, doc in index.docs.items() if doc["kind"] != "candidate"))
+            candidate_corpus = digest(sorted(candidate_map.items()))
             for candidate in candidates:
                 task = {"id": "event:" + candidate["id"], "type": "event", "candidate": candidate}
-                path = work / ("task_" + digest(task["id"]) + ".json")
+                key = digest([INVESTIGATION_VERSION, INVESTIGATOR_PROMPT, client.settings,
+                              args.max_rounds, task, corpus,
+                              candidate_corpus])
+                path = cache / ("task_" + key + ".json")
                 saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
                 if saved and not (args.retry_unresolved and
                         (saved["state"] != "done" or saved.get("result", {}).get("verdict") == "unresolved")):
@@ -352,6 +365,7 @@ def run_investigations(mission, args, client=None) -> dict:
                 try:
                     outcome = investigate_task(task, index, client, candidate_map, args.max_rounds)
                     atomic_json(path, outcome)
+                    atomic_json(work / ("task_" + digest(task["id"]) + ".json"), outcome)
                     done[task["id"]] = outcome
                 except Exception as exc:
                     issue = {"task_id": task["id"], "error": f"{type(exc).__name__}: {exc}"}
@@ -365,6 +379,7 @@ def run_investigations(mission, args, client=None) -> dict:
                         ("id", "title", "status", "crew", "evidence", "claims", "investigation_id")})
             pending = {"event:" + c["id"] for c in candidates} - done.keys()
             report = {"stage": "1f", "version": INVESTIGATION_VERSION, "snapshot": identity,
+                "model_requests": getattr(client, "request_count", len(getattr(client, "calls", []))),
                 "settings": client.settings, "source_snapshot": str(work / "sources.jsonl"),
                 "discovery_snapshot": discovery["snapshot"], "discovery_artifacts": discovery["artifacts"],
                 "input_hashes": inputs, "complete": not pending, "total_utterances": len(records),

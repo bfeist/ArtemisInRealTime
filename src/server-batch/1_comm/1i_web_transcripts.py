@@ -20,7 +20,27 @@ from shared.pds import atomic_json
 ASSESSMENT_FIELDS = ("importance", "category", "tags", "topic", "event_id", "statement_kinds")
 
 
-def publish_transcripts(mission: MissionConfig) -> dict:
+def publish_transcripts(mission: MissionConfig, *, dataset_manifest=None, release_id=None, activate=False, include_exports=False, sync_path=None, legacy_baseline=None) -> dict:
+    from shared.web_release import stage_release, activate_release
+    if dataset_manifest:
+        from transcript_dataset import read_dataset
+        dataset = read_dataset(Path(dataset_manifest))
+        if not dataset["report"].get("complete"):
+            raise RuntimeError("Imported dataset mapping is incomplete")
+        assessments = {row['uid']: row for row in dataset.get('assessments', [])}
+        originals = {row['uid']: row for row in dataset['utterances']}
+        records = [{**assessments.get(mapping['uid'], {}), **originals[mapping['uid']],
+                    **dataset['published_transcripts'][mapping['channel']][mapping['position']]}
+                   for mapping in dataset['entry_mapping']] if include_exports else []
+        destination, report = stage_release(
+            mission, dataset["published_transcripts"], release_id=release_id, sync_path=sync_path,
+            pao_audio_receipts=dataset['manifest'].get('paoPolicy', {}).get('audioDerivatives', {}),
+            exports=(lambda target: write_csvs(target, records)) if include_exports else None,
+            provenance={"dataset_manifest_sha256": file_digest(Path(dataset_manifest)),
+                        "dataset_contract": dataset["manifest"].get("contract")})
+        if activate:
+            activate_release(mission, destination.name, legacy_baseline=legacy_baseline)
+        return {**report, "release_path": str(destination), "activated": activate}
     root = mission.processed_transcripts / "1i_web_transcripts"
     with stage_lock(root):
         source = mission.transcript_enrichment
@@ -63,13 +83,15 @@ def publish_transcripts(mission: MissionConfig) -> dict:
             raise RuntimeError("Transcript inputs changed during publication; rerun 1i")
         if require_artifacts(source) != manifest:
             raise RuntimeError("Assessments changed during publication; rerun 1i")
-        write_csvs(mission.web_dir, csv_records)
-        atomic_json(mission.web_dir / "transcripts.json", result)
-        report = {"source_stage": source.name, "input_hashes": checksums,
-                  "comm_entries": len(result["comm"]), "pao_entries": len(result["pao"]),
-                  "categorized_entries": assessed,
-                  "artifacts": {name: file_digest(mission.web_dir / name) for name in
-                                ("transcripts.json", "comm_enriched.csv", "PAO_enriched.csv")}}
+        destination, report = stage_release(
+            mission, result, release_id=release_id,
+            exports=(lambda target: write_csvs(target, csv_records)) if include_exports else None,
+            sync_path=sync_path, provenance={"assessment_ledger_sha256": file_digest(ledger_path)})
+        report.update(source_stage=source.name, input_hashes=checksums,
+                      comm_entries=len(result["comm"]), pao_entries=len(result["pao"]),
+                      categorized_entries=assessed, release_path=str(destination), activated=activate)
+        if activate:
+            activate_release(mission, destination.name, legacy_baseline=legacy_baseline)
         atomic_json(root / "publication_report.json", report)
         return report
 
@@ -77,8 +99,19 @@ def publish_transcripts(mission: MissionConfig) -> dict:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mission", choices=list(MISSIONS), default="artemis-ii")
+    parser.add_argument("--dataset-manifest", type=Path, help="Verified model-free imported dataset")
+    parser.add_argument("--release-id")
+    parser.add_argument("--activate", action="store_true", help="Atomically switch active pointer after verification")
+    parser.add_argument("--activate-release", help="Verify and activate an existing release (also supports rollback)")
+    parser.add_argument("--legacy-baseline", help="Preserved baseline release required for first activation over legacy assets")
+    parser.add_argument("--include-exports", action="store_true")
+    parser.add_argument("--sync-path", type=Path, help="Private verified audio-evidence mappings; projected against local part manifest")
     args = parser.parse_args()
-    print(json.dumps(publish_transcripts(MISSIONS[args.mission]), indent=2))
+    if args.activate_release:
+        from shared.web_release import activate_release
+        print(json.dumps(activate_release(MISSIONS[args.mission], args.activate_release, legacy_baseline=args.legacy_baseline), indent=2))
+        return
+    print(json.dumps(publish_transcripts(MISSIONS[args.mission], dataset_manifest=args.dataset_manifest, release_id=args.release_id, activate=args.activate, include_exports=args.include_exports, sync_path=args.sync_path, legacy_baseline=args.legacy_baseline), indent=2))
 
 
 if __name__ == "__main__":

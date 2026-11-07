@@ -5,20 +5,30 @@ Artemis I was uncrewed — this entire pipeline is skipped for `artemis-i`.
 ## Data Flow
 
 ```text
-1a download -> 1b/1b3/1b4 transcribe/import -> 1c prepare COMM inputs + audio
-2j transcribe YouTube --------------------> 2k prepare PAO input
-                                              |
-                         processed/transcripts/inputs/ (plain intermediates)
-                                              |
-                         1d classify -> 1e discover -> 1f verify -> 1g/1h history
-                              |
-                         1i publish enriched JSON + CSVs under web/
+verified local PDS: 7f -> 1b3 / 1b4 -> 1c private inputs/cache
+legacy evidence -> transcript_dataset -> immutable imported dataset
+                                      -> 1i staged release -> explicit activation
+optional new research: reviewed impact plan -> bounded 1d / 1e / 1f -> 1g / 1h
 ```
 
-Plain transcript files stay under processing. All transcript views use the
-`transcripts.json` publication; web CSV exports are `comm_enriched.csv` and
-`PAO_enriched.csv`. Input preparation must precede classification; publication
-must follow it.
+The default runner performs `1c`, `1i` with no models, downloads or uploads.
+Existing legacy work requires the explicit dataset adapter rather than pretending
+its historical manifests are current classification/research output. See the
+[parent operational commands](../README.md#preserve-and-publish-an-imported-baseline)
+for import, read-only source reconstruction, staging, verification, first
+activation and rollback. Keep old evidence and root assets intact.
+
+`1i --dataset-manifest PATH` preserves the accepted published projection and
+stages compact JSON plus referenced audio under `web/releases/ID/`. CSV exports
+are opt-in with `--include-exports`. Timeline/crew/video indexes and compact sync
+projections join that release. Large prepared public videos remain hash-pinned
+shared dependencies; retain them while any release references them.
+`active-release.json` changes only on explicit activation. All retained releases
+remain playable for rollback. No step here physically retires old assets.
+
+JSON gzip sidecars are emitted and hashed in the release allowlist. HTTP content
+negotiation is the host/CDN's responsibility; verify `Content-Encoding`, `Vary`,
+CORS, caching and audio/video Range/206 behavior before production cutover.
 
 ## Step Details
 
@@ -40,7 +50,7 @@ Downloads ZIP archives, then auto-extracts WAV files into per-date subdirectorie
 | ---------------- | ---------------------------------------------------------- |
 | **Input**        | `raw/comm/**/*.wav`                                        |
 | **Output**       | `processed/transcripts/comm/{date}/{wav_stem}.json`        |
-| **Audio cache**  | `processed/comm_audio/{date}/{wav_stem}.aac` (published by `1c` only if referenced) |
+| **Audio cache**  | `processed/comm_audio/{date}/{wav_stem}.aac` (selected by release publication if referenced) |
 | **Idempotent**   | Yes — skips WAVs that already have a `.json` output        |
 | **GPU required** | Yes — WhisperX large-v3 on CUDA                            |
 | **Flags**        | `--force` re-transcribes all; `--test N` limits to N files |
@@ -56,50 +66,32 @@ Each output JSON contains:
 }
 ```
 
-### 1c: Prepare comm inputs and publish audio (`1c_prepare_comm.py`)
+### 1c: Prepare private comm inputs (`1c_prepare_comm.py`)
 
-|                |                                        |
-| -------------- | -------------------------------------- |
-| **Input**      | `processed/transcripts/comm/**/*.json` |
-| **Output**     | `processed/transcripts/inputs/comm.json`, `processed/transcripts/inputs/comm.csv`, `web/comm_sources.json` |
-| **Idempotent** | Yes — overwrites output each run       |
+Reads normalized `processed/transcripts/comm/**/*.json`, applies corrected-loop
+precedence, validates nonempty playback derivatives, and writes private
+`inputs/comm.csv`, `comm.json`, `comm_sources.json`, and `comm_audio_manifest.json`.
+It can adopt legacy web audio into the cache and upgrade old PCD encodes;
+normalized PCD metadata is updated for those upgrades. Snapshot first when
+preserving historical evidence. It never replaces or retires published audio.
 
-Audio producers (`1b`, standalone `1b2`, `1b3`, and `1b4`) prepare playback
-files under `processed/comm_audio/`, outside the publishable web tree.
-After hallucination filtering and corrected-loop precedence, `1c`:
+For a new source snapshot without conversion, adoption, original JSON writes or
+active-index changes, use `prepare_dataset_inputs.py --dataset-manifest PATH
+--output NEW_DIRECTORY --mission artemis-ii`. It emits exact CRLF projections,
+historical hash comparisons, a full old-UID duplicate/source inventory, current
+loader identity differences, `current-source-rows.jsonl` for the impact planner,
+and precedence audits under that new directory.
+Review these before promoting any input snapshot. Output paths cannot exist.
 
-1. Checks that every surviving source has nonempty prepared audio, adopting
-   existing `web/comm` files into the cache on the first run. Missing audio
-   fails the build before changing the published transcript indexes.
-2. Publishes only referenced recordings into `web/comm`, using hard links
-   where supported and copies otherwise. A file with any surviving utterance
-   stays published; M4A recordings retain their playback offsets and range seeking.
-3. Writes internal `inputs/comm.csv` and `inputs/comm.json`, plus referenced PDS source metadata. It does not publish plain transcript indexes.
-4. Moves every unreferenced file out of `web/comm` into the processing cache,
-   then removes empty date folders. This includes superseded AI clips, filtered
-   clips, and excluded Mission Audio. Conflicting cached versions are retained
-   under `processed/comm_audio/_retired/{run}/`.
-
-`processed/comm_audio_manifest.json` records published paths, byte sizes,
-utterance counts, and retired files. Runs that retire files also keep a receipt
-under `processed/comm_audio_reconciliations/`. Raw audio and transcript JSONs
-remain available, and a later build can restore a source directly from the cache.
-An empty comm export is rejected so missing inputs cannot retire all audio.
-
-This finalization is part of `1c` itself: normal runs, `pcd-comm`, `loops-comm`,
-PDS integration/refresh groups, and `refresh_assets.py --stage build` all use
-the same publication policy. To reconcile existing assets without transcription:
-
-```powershell
-uv run run_all.py --mission artemis-ii --step 1c
-```
+`collect_comm(mission, audit_dir)` is the shared read-only source collector;
+only its explicitly supplied audit directory receives output.
 
 Aggregates per-file transcripts into chronologically sorted pipe-delimited CSV.
 Columns are `t|s|d|src|text`: segment UTC, audio offset, segment duration,
 audio source relative to `web/comm/`, and text. Machine transcripts receive
 hallucination filtering; supplied PDS transcripts retain their text.
 
-The app reads enriched `web/transcripts.json`, published by 1i, using the shared
+The app reads enriched `releases/ID/transcripts.json` through the active pointer, using the shared
 TypeScript `CommEntry` type.
 Each entry has `t`, `s`, `d`, `src`, `text`, and optional `speaker`. Speaker
 names are separate from the utterance text and rendered when present in the
@@ -113,8 +105,8 @@ for downstream enrichment and PAO matching; it does not gain a new column.
 Imports verified PDS `data_audio_pcd` recordings into the same comm flow,
 preferring edited `data_transcripts_pcd` CSV/SRT over WhisperX. Run `7f` first
 to build the PDS catalogs, then `run_all.py --mission artemis-ii --step pcd-comm`
-to import PCD and rebuild `processed/transcripts/inputs/comm.csv`. The normal all-steps comm run also
-includes `1b3`; PDS archive retrieval remains explicit.
+to import PCD and rebuild `processed/transcripts/inputs/comm.csv`. `comm-prepare`
+routes `7f -> 1b3 -> 1b4 -> 1c`; PDS archive retrieval remains explicit.
 
 JSONs under `processed/transcripts/comm/pcd` retain NASA ID, speakers, exact
 supplied utterance UTC, relative playback offsets and provenance. Recording
@@ -124,8 +116,8 @@ supplied products are reported in `processed/pds/pcd_comm_report.json`.
 
 Step `1c` emits the existing five-column `t|s|d|src|text` CSV, including PCD
 sources such as `pcd/art002a000005.m4a`. Step `1b3` caches playback under
-`processed/comm_audio/pcd`; `1c` publishes referenced files to `web/comm/pcd`.
-`web/comm_sources.json` maps each published PCD source to metadata and
+`processed/comm_audio/pcd`; release publication selects referenced files.
+Private `inputs/comm_sources.json` maps each PCD source to metadata and
 PDS provenance. Comm Test has a separate PCD channel toggle. Supplied transcript
 text is preserved, including phrases filtered as hallucinations for machine
 transcription. See [PDS details](../7_pds/README.md#crew-pcd-audio-and-comm-transcripts)
@@ -153,8 +145,8 @@ superseded; the originals are preserved and boundary overhangs are audited.
 AI in omitted time intervals and crew PCD data remain available.
 
 Corrected JSONs live under `processed/transcripts/comm/loops`; prepared audio
-lives under `processed/comm_audio/loops`. Step `1c` publishes referenced audio
-under `web/comm/loops`. CSV UTC determines mission time and CSV audio offsets
+lives under `processed/comm_audio/loops`. Release publication copies referenced
+audio under `releases/ID/comm/loops`. CSV UTC determines mission time and CSV audio offsets
 determine seeking. Clock discontinuities delimit coverage; calendar-day labels
 and loop SRT timing do not determine it. Unresolvable date-only rows remain in
 `untimed_segments`, outside the timeline. No GPU is needed.
@@ -166,20 +158,15 @@ for details. Step `1d` classifies the corrected utterances from the updated comm
 
 ## Transcript classification and verified history
 
-The canonical flow is **1c + 2k -> 1d -> 1e -> 1f -> 1g -> 1h -> 1i**.
-The ordinary all-steps runner prepares both source inputs before starting 1d.
-`comm-history` runs 1d through 1i, including classification. From the repository
-root, after source transcription/import, rebuild inputs and run the whole
-transcript/history pipeline with:
-
-```powershell
-uv run --directory src/server-batch run_all.py --mission artemis-ii --step 1c 2k comm-history --backend hgx --model LLM-Alpha-512K --reasoning-effort low
-```
-
-This command can perform substantial model work and publishes web assets.
-It is a future-run command, not a validation command for a refactor. Existing
-completed processing outputs, research checkpoints and published assets need no
-migration or reclassification to remain on disk.
+New research uses **prepared inputs -> reviewed impact plan -> bounded 1d ->
+1e -> 1f -> 1g/1h -> staged 1i**. `comm-history` explicitly selects those stages;
+it requires `--work-plan reviewed-plan.json --history-limit N`. The plan binds
+semantic inputs and allowed stages. Direct model stages use `--limit N`.
+Request budgets apply per invocation, including retry requests in that run;
+they are not a durable cumulative quota across commands, restarts or stages.
+Repeated invocations can spend additional requests. Unresolved retries remain
+explicit. Existing imported work can be published without this model flow.
+`2j` and the legacy `2k` duplicate filter are explicit fallback operations only.
 
 ### 1d: Classify transcripts (`1d_enrich_transcripts.py`)
 
@@ -257,8 +244,8 @@ The utterance classifications pass through unchanged.
   classifications. Planned activities remain unconfirmed until supported by events.
 - **1h** publishes `web/timeline.json` and optional crew tracks under
   `web/timeline/crew/`. Detailed evidence remains in processing.
-- **1i** publishes `web/transcripts.json`, `web/comm_enriched.csv` and
-  `web/PAO_enriched.csv` directly from canonical 1d classifications,
+- **1i** stages `releases/ID/transcripts.json`; CSV exports require `--include-exports`.
+
   retaining current source text, audio offsets, durations and separate speaker names.
   PAO type filters (including PAO filler and PAO commentary) combine independently
   with subject filters; they do not affect COMM.
@@ -284,7 +271,7 @@ Stages 1d-1f use `utterances.jsonl`, `milestones.jsonl`, processing CSV projecti
 and `report.json` artifact manifests. The classification stage has no milestones. PAO CSV columns are
 `t|importance|category|tags|topic|event_id|pao_type|text`; subject category and
 broadcast type are separate. COMM CSV columns remain unchanged.
-1i alone writes enriched web transcript exports; no stage publishes plain CSVs
+1i alone stages enriched transcript exports; no stage publishes plain CSVs
 or plain comm JSON. Work checkpoints and request diagnostics live inside each stage. A manifest is
 committed only when all pending work is finished; validated work survives an
 interruption before that point. The runner stops at an incomplete stage.

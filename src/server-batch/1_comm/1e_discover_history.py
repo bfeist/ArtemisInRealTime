@@ -13,6 +13,7 @@ from config import MISSIONS
 from history_common import (ModelClient, add_model_arguments, atomic_json, digest,
                             events_from_records, file_digest, publish, read_jsonl, require_artifacts, stage_lock, transcript)
 from transcript_stages import EXTRACTION_SYSTEM_PROMPT, anchored_milestones, involved_crew, parse_extraction
+from assessment_reuse import dependency_key, validate_plan, logical_batches
 
 
 def discover(mission, args, client=None):
@@ -26,35 +27,44 @@ def discover(mission, args, client=None):
         inputs = {**upstream.get("input_hashes", {}), **{str(p): file_digest(p) for p in paths},
                   str(mission.transcript_enrichment / "report.json"):
                       file_digest(mission.transcript_enrichment / "report.json")}
+        if client is None:
+            validate_plan(args, records, "1e")
         client = client or ModelClient(args, root / "requests")
         identity = digest([inputs, client.settings, args.batch_size, args.context_lines, EXTRACTION_SYSTEM_PROMPT])
         work = root / "work" / identity
         work.mkdir(parents=True, exist_ok=True)
         accepted, errors, used, stopped = {}, [], 0, False
+        cache = root / "semantic_cache"
+        cache.mkdir(parents=True, exist_ok=True)
 
         def extract(targets, before, after):
             # A failed large request is split; successful groups are committed immediately.
             nonlocal used, stopped
-            path = work / (digest([r["uid"] for r in targets]) + ".json")
             event_ids = context.query_event_ids(targets[0]["ts"], targets[-1]["ts"])
+            references = context.query_window(targets[0]["ts"], targets[-1]["ts"])
+            prompt = transcript.build_user_prompt(targets, before, references,
+                ledger=accepted, context_after=after)
+            key = dependency_key(targets, before + after, client.settings,
+                                 [EXTRACTION_SYSTEM_PROMPT, references, sorted(event_ids),
+                                  [accepted.get(r["uid"], {}).get("milestones", []) for r in before]], labels=True)
+            path = cache / (key + ".json")
             if path.exists():
                 extraction = parse_extraction(path.read_text(encoding="utf-8"), targets, event_ids)
             else:
                 if stopped or (args.limit is not None and used >= args.limit):
                     return
                 used += 1
-                prompt = transcript.build_user_prompt(targets, before,
-                    context.query_window(targets[0]["ts"], targets[-1]["ts"]),
-                    ledger=accepted, context_after=after)
                 try:
                     raw = client.request(EXTRACTION_SYSTEM_PROMPT, prompt, "discover:" + path.stem)
                     extraction = parse_extraction(raw, targets, event_ids)
                     atomic_json(path, extraction)
+                    atomic_json(work / (digest([r["uid"] for r in targets]) + ".json"), extraction)
                 except Exception as exc:
                     rejected = isinstance(exc, ValueError)
                     issue = {"uids": [u["uid"] for u in targets], "error": str(exc), "split": rejected}
                     errors.append(issue)
                     atomic_json(work / ("error_" + path.name), issue)
+                    atomic_json(work / ("error_" + digest([r["uid"] for r in targets]) + ".json"), issue)
                     if not rejected:
                         stopped = True
                     if rejected and len(targets) > 1:
@@ -69,8 +79,7 @@ def discover(mission, args, client=None):
 
         # Resume by replaying saved groups before requesting any remaining targets.
         # Split groups use deterministic UID keys and local extraction indices.
-        for start in range(0, len(records), args.batch_size):
-            targets = records[start:start + args.batch_size]
+        for start, targets in logical_batches(records, args.batch_size):
             before, after = transcript.source_context(records, start, start + len(targets) - 1, args.context_lines)
 
             def resume(group, preceding, following):
@@ -86,6 +95,7 @@ def discover(mission, args, client=None):
 
             resume(targets, before, after)
         report = {"stage": "1e", "snapshot": identity, "settings": client.settings,
+                  "model_requests": getattr(client, "request_count", len(getattr(client, "calls", []))),
                   "input_hashes": inputs, "complete": len(accepted) == len(records),
                   "total_utterances": len(records), "pending": len(records) - len(accepted), "errors": errors}
         atomic_json(work / "progress.json", report)

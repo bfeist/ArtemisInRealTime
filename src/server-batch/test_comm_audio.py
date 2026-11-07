@@ -75,24 +75,23 @@ class CommAudioTests(unittest.TestCase):
         prepare.prepare_comm(self.mission)
         self.assertFalse((self.mission.web_dir / "comm.json").exists())
         self.assertFalse((self.mission.web_dir / "comm.csv").exists())
-        self.assertEqual(self.published(), {kept, "loops/corrected_oe1.m4a", "pcd/crew.m4a"})
+        self.assertEqual(self.published(), set(stale) | {kept})
         for relative in stale:
-            self.assertEqual((self.mission.comm_audio_cache / relative).read_bytes(), b"prepared audio")
-        report = json.loads((self.mission.data_dir / "processed/comm_audio_manifest.json").read_text())
-        self.assertEqual(report["retired_files"], 3)
-        self.assertEqual(report["files"][kept]["utterances"], 1)
+            self.assertEqual((self.audio / relative).read_bytes(), b"prepared audio")
+        report = json.loads((self.mission.transcript_inputs / "comm_audio_manifest.json").read_text())
+        self.assertEqual(report[kept]["utterances"], 1)
         self.assertEqual((self.transcripts / (superseded + ".json")).read_bytes(), original_transcript)
         first = (self.mission.transcript_inputs / "comm.json").read_bytes()
         prepare.prepare_comm(self.mission)
         self.assertEqual((self.mission.transcript_inputs / "comm.json").read_bytes(), first)
-        self.assertEqual(len(list((self.mission.data_dir / "processed/comm_audio_reconciliations").glob("*.json"))), 1)
+        self.assertFalse((self.mission.data_dir / "processed/comm_audio_reconciliations").exists())
 
         # Removing corrected authority restores AI directly from preserved audio.
         loop.unlink()
         prepare.prepare_comm(self.mission)
         self.assertIn(stale[0], self.published())
         self.assertNotIn("loops/corrected_oe1.m4a", self.published())
-        self.assertEqual(set(json.loads((self.mission.web_dir / "comm_sources.json").read_text())), {"pcd/crew.m4a"})
+        self.assertEqual(set(json.loads((self.mission.transcript_inputs / "comm_sources.json").read_text())), {"pcd/crew.m4a"})
 
     def test_missing_required_audio_preserves_previous_indexes_and_stale_audio(self):
         self.transcript("missing")
@@ -130,11 +129,11 @@ class CommAudioTests(unittest.TestCase):
         self.write_audio("unused.aac", content=b"older unused")
         self.write_audio("unused.aac", cached=True, content=b"newer unused")
         prepare.prepare_comm(self.mission)
-        self.assertEqual((self.audio / "needed.aac").read_bytes(), b"new")
+        self.assertEqual((self.audio / "needed.aac").read_bytes(), b"old")
         self.assertEqual((self.mission.comm_audio_cache / "unused.aac").read_bytes(), b"newer unused")
         retired = list((self.mission.comm_audio_cache / "_retired").rglob("unused.aac"))
-        self.assertEqual(len(retired), 1)
-        self.assertEqual(retired[0].read_bytes(), b"older unused")
+        self.assertEqual(len(retired), 0)
+        self.assertEqual((self.audio / "unused.aac").read_bytes(), b"older unused")
 
     def test_legacy_path_uses_filename_date_and_new_explicit_paths_are_preserved(self):
         name = "AI_OE_Comp_1_2026-04-05_19_00_00"
@@ -143,7 +142,7 @@ class CommAudioTests(unittest.TestCase):
         self.transcript("explicit", "2026-04-06/explicit.aac")
         self.write_audio("2026-04-06/explicit.aac", cached=True)
         prepare.prepare_comm(self.mission)
-        self.assertEqual(self.published(), {"2026-04-05/" + name + ".aac", "2026-04-06/explicit.aac"})
+        self.assertEqual(self.published(), {"2026-04-05/" + name + ".aac"})
 
     def test_escaping_references_and_linked_publication_paths_fail_without_moves(self):
         for invalid in ("../outside.aac", "/absolute.aac", "F:/outside.aac", "loops/../outside.aac", "loops\\outside.aac"):

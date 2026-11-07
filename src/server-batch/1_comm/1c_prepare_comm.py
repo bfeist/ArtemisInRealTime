@@ -1,9 +1,9 @@
-"""Step 1c — Prepare comm classification inputs and reconcile playback audio.
+"""Step 1c — Prepare private comm inputs and playback cache.
 
 Reads per-file transcript JSONs and prepares internal comm.json and comm.csv,
 sorted chronologically. Step 1i publishes enriched transcripts after classification.
 Audio imports prepare a cache in processed/comm_audio/. After filtering and
-loop precedence, this step publishes only referenced audio under web/comm/.
+loop precedence, this step validates referenced cached audio without changing web/.
 
 Output columns: t|s|d|src|text
   t   — ISO-8601 UTC timestamp of the segment
@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import MISSIONS, MissionConfig
 from shared.pds import atomic_json
 from shared.pds_loops import apply_loop_precedence
-from shared.comm_audio import prepare_comm_audio, reconcile_comm_audio
+from shared.comm_audio import prepare_comm_audio
 from shared.ia_video_downloads import plan_lock
 from shared.pds_comm import ensure_pcd_audio
 
@@ -50,17 +50,9 @@ HALLUCINATIONS = {
 }
 
 
-def prepare_comm(mission: MissionConfig) -> None:
-    if not mission.ia_comm_collection:
-        print(f"  No comm audio configured for {mission.name}. Skipping.")
-        return
-
+def collect_comm(mission: MissionConfig, audit_dir: Path):
+    """Read normalized originals and reconcile rows; write audits only to audit_dir."""
     transcript_dir = mission.processed_transcripts / "comm"
-    if not transcript_dir.exists():
-        print(f"  Transcript directory not found: {transcript_dir}")
-        print("  Run step 1b (transcription) first.")
-        return
-
     # Collect all transcript JSONs, building comm entries and CSV rows
     transcripts = []  # list of (t, s, d, src, text) tuples for comm.csv
     web_entries = {}
@@ -128,11 +120,28 @@ def prepare_comm(mission: MissionConfig) -> None:
                 entry["speaker"] = speaker
             web_entries[row] = entry
 
-    transcripts = apply_loop_precedence(transcripts, sources, mission.data_dir / "processed/pds")
+    transcripts = apply_loop_precedence(transcripts, sources, audit_dir)
 
     # Sort by UTC (column 0)
     transcripts.sort(key=lambda r: datetime.fromisoformat(r[0].replace("Z", "+00:00"))
                      if r[0] else datetime.min.replace(tzinfo=timezone.utc))
+
+    return transcripts, web_entries, sources, pcd_transcripts
+
+
+def prepare_comm(mission: MissionConfig) -> None:
+    if not mission.ia_comm_collection:
+        print(f"  No comm audio configured for {mission.name}. Skipping.")
+        return
+
+    transcript_dir = mission.processed_transcripts / "comm"
+    if not transcript_dir.exists():
+        print(f"  Transcript directory not found: {transcript_dir}")
+        print("  Run step 1b (transcription) first.")
+        return
+
+    transcripts, web_entries, sources, pcd_transcripts = collect_comm(
+        mission, mission.data_dir / "processed/pds")
 
     # Routine builds also upgrade cached PCD audio without WhisperX or PDS retrieval.
     # Compact loop AAC is already suitable and is kept byte-for-byte unchanged.
@@ -159,9 +168,9 @@ def prepare_comm(mission: MissionConfig) -> None:
 
     print(f"  Saved {len(transcripts)} comm entries to {out_path}")
     referenced = {row[3] for row in transcripts}
-    atomic_json(mission.web_dir / "comm_sources.json",
+    atomic_json(mission.transcript_inputs / "comm_sources.json",
                 {src: metadata for src, metadata in sources.items() if src in referenced})
-    reconcile_comm_audio(mission, audio_manifest)
+    atomic_json(mission.transcript_inputs / "comm_audio_manifest.json", audio_manifest)
 
     # Stats
     if transcripts:
@@ -171,7 +180,7 @@ def prepare_comm(mission: MissionConfig) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Prepare comm classification inputs and reconcile web audio")
+    parser = argparse.ArgumentParser(description="Prepare private comm classification inputs and audio cache")
     parser.add_argument("--mission", required=True, choices=list(MISSIONS.keys()))
     args = parser.parse_args()
 

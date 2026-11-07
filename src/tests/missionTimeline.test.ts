@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadCrewTimeline, loadMissionTimeline } from "../data/missionTimeline.ts";
 import type { TimelineAssetRef } from "../types/missionTimeline.ts";
 
+vi.mock("../data/missionRelease.ts", () => ({
+  resolveMissionRelease: async (base: string) => base.replace(/\/+$/, ""),
+}));
+
 afterEach(() => vi.unstubAllGlobals());
 
 const crewRef: TimelineAssetRef = {

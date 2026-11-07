@@ -82,6 +82,7 @@ def stage_lock(root: Path):
 
 
 def add_model_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--work-plan", type=Path, help="Read-only impact plan reviewed before bounded model work")
     parser.add_argument("--backend", choices=["hgx"], default="hgx")
     parser.add_argument("--model", default=None)
     parser.add_argument("--reasoning-effort", choices=["auto", "low", "medium", "high"], default="low")
@@ -94,6 +95,8 @@ def add_model_arguments(parser: argparse.ArgumentParser) -> None:
 class ModelClient:
     def __init__(self, args, diagnostic_dir: Path):
         self.args = args
+        self.request_count = 0
+        self.request_limit = getattr(args, "model_request_limit", None)
         self.diagnostic_dir = diagnostic_dir
         endpoint, _, model = transcript.llm_settings(args.backend, args.model)
         self.settings = {"backend": args.backend, "endpoint": endpoint, "model": model,
@@ -101,6 +104,9 @@ class ModelClient:
                          "temperature": 0.1}
 
     def request(self, system: str, prompt: str, key: str, response_format: dict | None = None) -> str:
+        if self.request_limit is not None and self.request_count >= self.request_limit:
+            raise RuntimeError(f"Model request budget exhausted ({self.request_limit} HGX calls in this invocation); checkpoints retained")
+        self.request_count += 1
         details = {"requested_at": now(), "settings": self.settings,
                    "system_prompt": system, "user_prompt": prompt}
         if response_format is not None:

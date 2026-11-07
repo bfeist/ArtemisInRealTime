@@ -282,7 +282,8 @@ class CanonicalPipelineTest(unittest.TestCase):
         transcripts.publish_transcripts(self.mission)
         self.assertEqual(tree["summary"]["total_assessed_utterances"], 2)
         self.assertEqual(tree["summary"]["merged_unique_milestones"], 1)
-        public = json.loads((self.mission.web_dir / "transcripts.json").read_text())
+        release = json.loads((self.mission.processed_transcripts / "1i_web_transcripts/publication_report.json").read_text())["release_path"]
+        public = json.loads((Path(release) / "transcripts.json").read_text())
         self.assertEqual(public["pao"][1]["category"], "systems")
         self.assertTrue((self.mission.web_dir / "timeline.json").exists())
         for fn in (stage.classify, discovery.discover, investigate.run_investigations):
@@ -374,12 +375,17 @@ class CanonicalPipelineTest(unittest.TestCase):
         def stream(prompt, **kwargs):
             calls.append((prompt, kwargs))
             return "", json.dumps(replies.pop(0)), {"finish_reason": "stop", "done_received": True}
+        reuse = importlib.import_module("1_comm.assessment_reuse")
+        plan = self.base / "work-plan.json"
+        plan.write_text(json.dumps({"contract":"transcript-impact-v1", "stages":["1d","1e","1f"],
+            "max_requests":10, "semantic_revision":reuse.digest([reuse.semantic(r) for r in self.original])}))
         with patch.dict("config.MISSIONS", {"artemis-ii": self.mission}), \
              patch("mission_context.MissionContextIndex", EmptyContext), \
              patch("history_sources.reference_pdfs", return_value=[]), \
              patch.object(common.transcript, "stream_llm_assessment", side_effect=stream), \
              patch.object(sys, "argv", ["run_all.py", "--mission", "artemis-ii", "--step", "comm-history",
-                 "--backend", "hgx", "--model", "LLM-Alpha-512K", "--reasoning-effort", "low"]), \
+                 "--backend", "hgx", "--model", "LLM-Alpha-512K", "--reasoning-effort", "low",
+                 "--work-plan", str(plan), "--history-limit", "10"]), \
              contextlib.redirect_stdout(io.StringIO()):
             runner.main()
         self.assertFalse(replies)
@@ -387,7 +393,9 @@ class CanonicalPipelineTest(unittest.TestCase):
         self.assertTrue(all(k["backend"] == "hgx" and k["reasoning_effort"] == "low" for _, k in calls))
         self.assertEqual(calls[0][1]["response_format"], classifier.response_format(2))
         self.assertTrue((self.mission.web_dir / "timeline.json").exists())
-        self.assertTrue((self.mission.web_dir / "transcripts.json").exists())
+        report = json.loads((self.mission.processed_transcripts / "1i_web_transcripts/publication_report.json").read_text())
+        self.assertTrue((Path(report["release_path"]) / "transcripts.json").exists())
+        self.assertFalse((self.mission.web_dir / "active-release.json").exists())
 
     def test_interrupted_verification_retains_completed_event_tasks(self):
         source = self.mission.transcript_inputs / "PAO.csv"

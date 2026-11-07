@@ -2,9 +2,42 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadComm, loadEnrichedTranscripts } from "../data/comm.ts";
 import { transcriptLabel } from "../types/transcripts.ts";
 
+vi.mock("../data/missionRelease.ts", () => ({
+  resolveMissionRelease: async (base: string) => base.replace(/\/+$/, ""),
+}));
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("enriched transcripts", () => {
+  it.each(["comm/../private.m4a", "comm/raw.wav", "https://example.test/audio.m4a"])(
+    "rejects an invalid PAO playback path %s",
+    async (src) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          Response.json({
+            comm: [],
+            pao: [
+              {
+                t: "2026-04-01T18:00:00Z",
+                text: "Commentary",
+                playback: {
+                  source: "ia",
+                  recordingId: "ia-1",
+                  feed: "pao",
+                  audio: { src, s: 0, d: 8 },
+                },
+              },
+            ],
+          })
+        )
+      );
+      await expect(loadEnrichedTranscripts("/web")).rejects.toThrow(
+        "Invalid PAO playback selection"
+      );
+    }
+  );
+
   it("loads assessments and playback metadata in one request", async () => {
     const transcripts = {
       comm: [{ t: "2026-04-01T18:00:00Z", s: 3, d: 2, category: "science", text: "A | B" }],
@@ -12,7 +45,7 @@ describe("enriched transcripts", () => {
     };
     const fetch = vi.fn().mockResolvedValue(Response.json(transcripts));
     vi.stubGlobal("fetch", fetch);
-    expect(await loadEnrichedTranscripts("/web")).toEqual(transcripts);
+    expect(await loadEnrichedTranscripts("/web")).toEqual({ ...transcripts, assetBase: "/web" });
     expect(fetch).toHaveBeenCalledExactlyOnceWith("/web/transcripts.json");
   });
 

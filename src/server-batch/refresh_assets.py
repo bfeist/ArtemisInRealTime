@@ -37,15 +37,16 @@ STAGES = {
     ],
     "build": [
         ("pds-integrate", "7_pds.7f_integrate", []),
+        ("pds-pcd", "1_comm.1b3_pcd_audio", []),
+        ("pds-loops", "1_comm.1b4_loop_audio", []),
         ("exif", "3_photos.4a_extract_all_exif", []),
         ("brackets", "3_photos.4b_detect_brackets", []),
         ("ledger", "3_photos.4c_build_ledger", []),
         ("photo-tiers", "3_photos.4d_generate_tiers", []),
         ("photo-index", "3_photos.4e_web_photos_json", []),
-        ("photo-cleanup", "3_photos.4f_cleanup_web", []),
         ("web-media", "prepare_web_media", []),
         ("video-index", "2_video.2g_web_video", []),
-        # 1c prepares internal inputs and reconciles audio; 1i publishes enriched transcripts.
+        # 1c prepares private inputs; 1i stages an immutable release without activation.
         ("comm-index", "1_comm.1c_prepare_comm", []),
         ("comm-transcripts", "1_comm.1i_web_transcripts", []),
         ("trajectory", "5_trajectory.5a_orion_track", []),
@@ -54,6 +55,7 @@ STAGES = {
         ("itinerary", "6_itinerary.6a_web_itinerary", []),
     ],
     "status": [("status", "asset_status", [])],
+    "publish": [("asset-publish", "publish_assets", [])],
 }
 
 
@@ -68,7 +70,7 @@ def save(path, data):
     tmp.replace(path)
 
 
-def refresh(mission, stage, only=None):
+def refresh(mission, stage, only=None, dataset_manifest=None):
     jobs = STAGES[stage]
     if only:
         unknown = set(only) - {j[0] for j in jobs}
@@ -96,6 +98,9 @@ def refresh(mission, stage, only=None):
             shutil.copy2(path, target)
 
     for name, module, extra in jobs:
+        extra = list(extra)
+        if name == "comm-transcripts" and dataset_manifest:
+            extra.extend(["--dataset-manifest", str(dataset_manifest)])
         job = {"name": name, "started": now(), "status": "running", "log": str(root / (name + ".log"))}
         run["jobs"].append(job)
         save(root / "run.json", run)
@@ -124,8 +129,9 @@ if __name__ == "__main__":
     parser.add_argument("--mission", required=True, choices=list(MISSIONS))
     parser.add_argument("--stage", required=True, choices=list(STAGES))
     parser.add_argument("--only", nargs="+", help="Run named jobs within the stage")
+    parser.add_argument("--dataset-manifest", type=Path, help="Verified imported transcript dataset")
     args = parser.parse_args()
     from shared.ia_video_downloads import plan_lock
     mission = MISSIONS[args.mission]
     with plan_lock(mission.bulk_dir / "processed" / "refresh" / (args.stage + ".json")):
-        raise SystemExit(0 if refresh(mission, args.stage, args.only) else 1)
+        raise SystemExit(0 if refresh(mission, args.stage, args.only, args.dataset_manifest) else 1)

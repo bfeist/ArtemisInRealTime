@@ -1,13 +1,11 @@
-"""Publish final comm references and retire unused playback files outside web/."""
+"""Prepare private audio derivatives without changing retained publications."""
 
 import os
 import re
 import shutil
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
 from uuid import uuid4
 
-from shared.pds import atomic_json
 
 
 def audio_relative_path(source):
@@ -117,56 +115,23 @@ def prepare_comm_audio(mission, rows):
     for relative, source in selected.items():
         cached = _inside(cache, relative)
         _publish(source, cached)
-        _publish(cached, _inside(web, relative))
+        # Publication owns web assets; preparation only fills the private cache.
         manifest[relative] = {"bytes": cached.stat().st_size, "utterances": counts[relative],
                               "sources": sorted(sources[relative])}
     return manifest
 
 
 def reconcile_comm_audio(mission, manifest):
-    """Run only after all comm indexes have been saved successfully.
+    """Compatibility receipt only: published assets remain pinned for rollback.
 
-    Preserve every retired file in processed/, including older versions that
-    collide with a current cache entry. Originals and transcript JSONs are untouched.
+    Final release publication owns reference closure. Physical retirement is a
+    separate explicit operation that must account for all retained releases.
     """
     web, cache = _roots(mission)
     published = _files(web)
-    if not manifest or any(relative not in published for relative in manifest):
-        raise RuntimeError("Comm audio publication is incomplete; no audio retired")
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    # Resolve every source and destination before moving the first file.
-    moves = []
-    for relative, source in sorted(published.items()):
-        if relative in manifest:
-            continue
-        target = _inside(cache, relative)
-        if target.exists() and not source.samefile(target):
-            target = _inside(cache, "_retired/" + stamp + "/" + relative)
-        moves.append((relative, source, target, source.stat().st_size))
-
-    retired = []
-    for relative, source, target, size in moves:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists() and source.samefile(target):
-            source.unlink()  # The cache retains the same bytes through its hard link.
-        else:
-            os.replace(source, target)
-        retired.append({"path": relative, "bytes": size,
-                        "cache": target.relative_to(cache).as_posix()})
-    for directory in sorted((p for p in web.rglob("*") if p.is_dir()),
-                            key=lambda p: len(p.parts), reverse=True):
-        _inside(web, directory.relative_to(web).as_posix())
-        if not any(directory.iterdir()):
-            directory.rmdir()
-
-    report = {"date": datetime.now(timezone.utc).isoformat(), "files": manifest,
-              "published_files": len(manifest), "published_bytes": sum(r["bytes"] for r in manifest.values()),
-              "retired_files": len(retired), "retired_bytes": sum(r["bytes"] for r in retired),
-              "retired": retired}
-    processed = mission.data_dir / "processed"
-    atomic_json(processed / "comm_audio_manifest.json", report)
-    if retired:
-        atomic_json(processed / "comm_audio_reconciliations" / (stamp + ".json"), report)
-    print(f"  Comm audio: {len(manifest)} published; {len(retired)} retired to processed/comm_audio "
-          f"({report['retired_bytes'] / (1 << 20):.1f} MiB)")
-    return report
+    if not manifest:
+        raise RuntimeError("Refusing empty audio reconciliation")
+    unreferenced = sorted(set(published) - set(manifest))
+    return {"files": manifest, "retired_files": 0, "retired_bytes": 0,
+            "retired": [], "unreferenced_legacy_files": unreferenced,
+            "retirement_policy": "Retain assets referenced by active or rollback releases"}

@@ -3,6 +3,7 @@ import { GroupedVirtuoso, type GroupedVirtuosoHandle } from "react-virtuoso";
 import styles from "./CommTest.module.css";
 import type { CommEntry, PaoEntry } from "../types/transcripts.ts";
 import { loadEnrichedTranscripts } from "../data/comm.ts";
+import { loadVideoSync, videoPositions, type VideoSync } from "../data/videoSync.ts";
 
 const ASSETS_BASE = import.meta.env.DEV ? "/artemis-assets" : "https://media.artemisinrealtime.org";
 
@@ -115,6 +116,9 @@ function CommTest(): JSX.Element {
   const [paoEntries, setPaoEntries] = useState<PaoEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [audioBase, setAudioBase] = useState(`${ASSETS_BASE}/artemis-ii/web`);
+  const [videoSync, setVideoSync] = useState<VideoSync>({ schemaVersion: 1, mappings: [] });
+  const [videoError, setVideoError] = useState(false);
 
   const [visible, setVisible] = useState<Record<ChannelId, boolean>>({
     "OE-1": true,
@@ -161,11 +165,21 @@ function CommTest(): JSX.Element {
     const base = `${ASSETS_BASE}/artemis-ii/web`;
 
     loadEnrichedTranscripts(base)
-      .then(({ comm, pao }) => {
+      .then(({ comm, pao, assetBase }) => {
         if (cancelled) return;
+        setAudioBase(assetBase ?? base);
         setEntries(comm);
         setPaoEntries(pao);
         setLoading(false);
+        if (assetBase) {
+          loadVideoSync(base)
+            .then((sync) => {
+              if (!cancelled) setVideoSync(sync);
+            })
+            .catch(() => {
+              if (!cancelled) setVideoError(true);
+            });
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -274,9 +288,9 @@ function CommTest(): JSX.Element {
         <div className={styles.playerBar}>
           <div className={styles.playerMeta}>
             <span
-              className={`${styles.channel} ${channelBadgeClass(channelFromSrc(activeEntry.src))}`}
+              className={`${styles.channel} ${activeEntry.source === "PAO" ? styles.channelPao : channelBadgeClass(channelFromSrc(activeEntry.src))}`}
             >
-              {channelFromSrc(activeEntry.src)}
+              {activeEntry.source === "PAO" ? "PAO" : channelFromSrc(activeEntry.src)}
             </span>
             <span className={styles.playerTime}>{formatTime(activeEntry.t)}</span>
             <span className={styles.playerText}>
@@ -292,7 +306,7 @@ function CommTest(): JSX.Element {
             key={`${activeEntry.t}|${activeEntry.src ?? ""}`}
             controls
             className={styles.audioEl}
-            src={`${ASSETS_BASE}/artemis-ii/web/comm/${aacPath(activeEntry.src ?? "")}`}
+            src={`${audioBase}/comm/${aacPath(activeEntry.src ?? "")}`}
           />
           <button
             type="button"
@@ -307,6 +321,7 @@ function CommTest(): JSX.Element {
 
       {loading && <p className={styles.status}>Loading transcripts…</p>}
       {error && <p className={styles.status}>Error: {error}</p>}
+      {videoError && <p className={styles.status}>Video links are temporarily unavailable.</p>}
 
       {!loading && !error && (
         <>
@@ -497,6 +512,22 @@ function CommTest(): JSX.Element {
               itemContent={(index) => {
                 const row = merged[index];
                 if (row.kind === "pao") {
+                  const playback = row.entry.playback;
+                  const videoLinks = playback?.video
+                    ? [
+                        {
+                          id: playback.video.id,
+                          seconds: playback.video.s,
+                          key: playback.video.mappingId,
+                        },
+                      ]
+                    : videoPositions(videoSync, row.entry.t, playback?.feed).map(
+                        ({ mapping, seconds }) => ({
+                          id: mapping.videoId,
+                          seconds,
+                          key: mapping.id,
+                        })
+                      );
                   return (
                     <div className={styles.entryPao}>
                       <div className={styles.time}>{formatTime(row.entry.t)}</div>
@@ -511,6 +542,34 @@ function CommTest(): JSX.Element {
                           </span>
                         )}
                         {row.entry.text}
+                        {playback?.audio && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const audio = playback.audio;
+                              setActiveEntry({
+                                ...row.entry,
+                                source: "PAO",
+                                src: audio.src.slice(5),
+                                s: audio.s,
+                                d: audio.d,
+                              });
+                            }}
+                          >
+                            Listen
+                          </button>
+                        )}
+                        {videoLinks.map(({ id, seconds, key }) => (
+                          <a
+                            key={key}
+                            href={`https://www.youtube.com/watch?v=${id}&t=${Math.floor(seconds)}s`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {" "}
+                            Watch video
+                          </a>
+                        ))}
                       </div>
                     </div>
                   );

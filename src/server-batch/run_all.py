@@ -1,7 +1,7 @@
 """ArtemisInRealTime — Pipeline runner.
 
 Usage (recommended — via uv):
-    uv run run_all.py --mission artemis-ii              # Run all steps
+    uv run run_all.py --mission artemis-ii              # Model-free preparation and staged publication
     uv run run_all.py --mission artemis-ii --step 2a    # Run single step
     uv run run_all.py --mission artemis-i --step 2a 2b  # Run multiple steps
 
@@ -39,6 +39,9 @@ STEP_GROUPS: dict[str, list[str]] = {
     "pcd-comm": ["1b3", "1c"],
     "loops-comm": ["1b4", "1c"],
     "comm-history": ["1d", "1e", "1f", "1g", "1h", "1i"],
+    "comm-prepare": ["7f", "1b3", "1b4", "1c"],
+    "comm-publish": ["1i"],
+    "routine-build": ["1c", "1i"],
     # Re-check all external photo sources for new arrivals, download them,
     # and rebuild the ledger + web tiers + photos.json.
     # All download steps are idempotent — safe to re-run at any time.
@@ -51,11 +54,12 @@ STEP_GROUPS: dict[str, list[str]] = {
 # Step registry: (step_id, module_path, description, missions)
 # missions: None = all, or set of slugs
 STEPS = [
+    ("assets-publish", "publish_assets", "Publish web assets to InterServer using rsync", None),
     ("1a", "1_comm.1a_download_ia_zips", "Download comm audio ZIPs", {"artemis-ii"}),
     ("1b", "1_comm.1b_transcribe", "Transcribe comm audio (WhisperX)", {"artemis-ii"}),
     ("1b3", "1_comm.1b3_pcd_audio", "Import PDS crew PCD audio and transcripts", {"artemis-ii"}),
     ("1b4", "1_comm.1b4_loop_audio", "Import corrected PDS voice-loop transcripts", {"artemis-ii"}),
-    ("1c", "1_comm.1c_prepare_comm", "Prepare comm classification inputs and reconcile web audio", {"artemis-ii"}),
+    ("1c", "1_comm.1c_prepare_comm", "Prepare private comm inputs and audio cache", {"artemis-ii"}),
     ("2a", "2_video.2a_ia_video_discover", "Discover IA video items", None),
     ("2b", "2_video.2b_ia_video_download", "Download IA video MP4s", None),
     ("2d", "2_video.2d_yt_metadata", "Fetch YouTube metadata", None),
@@ -95,7 +99,7 @@ STEPS = [
     ("1f", "1_comm.1f_investigate_history", "Verify candidate history against original sources", {"artemis-ii"}),
     ("1g", "1_comm.1g_mission_context", "Build hierarchy from investigated mission history", {"artemis-ii"}),
     ("1h", "1_comm.1h_web_timeline", "Publish mission timeline and optional crew tracks", {"artemis-ii"}),
-    ("1i", "1_comm.1i_web_transcripts", "Publish enriched comm and PAO JSON and CSVs", {"artemis-ii"}),
+    ("1i", "1_comm.1i_web_transcripts", "Stage immutable enriched comm and PAO release", {"artemis-ii"}),
     ("7a", "7_pds.7a_discover", "Discover complete public PDS bundles", {"artemis-ii"}),
     ("7b", "7_pds.7b_inventory_local", "Inventory local PDS candidates and ZIPs", {"artemis-ii"}),
     ("7c", "7_pds.7c_reconcile", "Verify reuse and save PDS transfer plan", {"artemis-ii"}),
@@ -111,7 +115,8 @@ def run_step(
     backend: str = "hgx", model: str | None = None,
     hide_reasoning: bool = False, reasoning_effort: str | None = None,
     history_limit: int | None = None, retry_unresolved: bool = False,
-    max_tokens: int | None = None,
+    max_tokens: int | None = None, input_dir: str | None = None,
+    dataset_manifest: str | None = None, work_plan: str | None = None,
 ) -> bool:
     """Import and run a single step's main() function."""
     print(f"\n{'='*60}")
@@ -121,6 +126,10 @@ def run_step(
     try:
         # Simulate --mission argument for the step
         sys.argv = ["run_all.py", "--mission", mission_slug]
+        if step_id == "2j":
+            sys.argv.extend(["--input-dir", input_dir])
+        if step_id == "1i" and dataset_manifest:
+            sys.argv.extend(["--dataset-manifest", dataset_manifest])
         if step_id in {"1d", "1e", "1f"}:
             sys.argv.extend(["--backend", backend])
             if model:
@@ -135,6 +144,8 @@ def run_step(
                 sys.argv.extend(["--limit", str(history_limit)])
         if step_id == "1f" and retry_unresolved:
             sys.argv.append("--retry-unresolved")
+        if step_id in {"1d", "1e", "1f"} and work_plan:
+            sys.argv.extend(["--work-plan", work_plan])
         module = importlib.import_module(module_path)
         # Reload in case it was already imported
         importlib.reload(module)
@@ -166,7 +177,7 @@ def main():
     parser.add_argument(
         "--step",
         nargs="*",
-        help="Specific step(s) to run (e.g. 2a 2b). Omit to run all.",
+        help="Specific steps/groups. Default is model-free routine-build.",
     )
     parser.add_argument(
         "--list",
@@ -181,6 +192,9 @@ def main():
     parser.add_argument("--history-limit", type=int, help="Limit pending work items per transcript model stage")
     parser.add_argument("--retry-unresolved", action="store_true", help="Retry exhausted 1f event investigations")
     parser.add_argument("--max-tokens", type=int, help="Override token ceiling for transcript model stages")
+    parser.add_argument("--input-dir", help="Required cached chunks for explicit 2j fallback ASR")
+    parser.add_argument("--dataset-manifest", help="Imported dataset for staged publication")
+    parser.add_argument("--work-plan", help="Reviewed bounded model impact plan")
     args = parser.parse_args()
     if args.history_limit is not None and args.history_limit < 1:
         parser.error("--history-limit must be positive")
@@ -223,8 +237,13 @@ def main():
             sys.exit(1)
         steps_to_run = [(s, m, d, a) for sid in requested for s, m, d, a in STEPS if s == sid]
     else:
-        # Multi-terabyte retrieval requires an explicit PDS step/group selection.
-        steps_to_run = [s for s in STEPS if not s[0].startswith("7")]
+        steps_to_run = [s for sid in STEP_GROUPS["routine-build"] for s in STEPS if s[0] == sid]
+
+    selected = {s[0] for s in steps_to_run}
+    if "2j" in selected and not args.input_dir:
+        parser.error("Explicit 2j fallback transcription requires --input-dir")
+    if selected & {"1d", "1e", "1f"} and (not args.work_plan or not args.history_limit):
+        parser.error("Model work requires --work-plan and positive --history-limit")
 
     # Filter by mission applicability
     steps_to_run = [
@@ -244,7 +263,8 @@ def main():
         ok = run_step(step_id, module_path, description, args.mission,
                       backend=args.backend, model=args.model, hide_reasoning=args.hide_reasoning,
                       reasoning_effort=args.reasoning_effort, history_limit=args.history_limit,
-                      retry_unresolved=args.retry_unresolved, max_tokens=args.max_tokens)
+                      retry_unresolved=args.retry_unresolved, max_tokens=args.max_tokens,
+                      input_dir=args.input_dir, dataset_manifest=args.dataset_manifest, work_plan=args.work_plan)
         results.append((step_id, ok))
         if not ok:
             if step_id.startswith("7"):

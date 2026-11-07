@@ -1,17 +1,24 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadEnrichedTranscripts } from "../data/comm.ts";
 import { VirtuosoMockContext } from "react-virtuoso";
 import CommTest from "../pages/CommTest.tsx";
+import { loadVideoSync } from "../data/videoSync.ts";
 
 vi.mock("../data/comm.ts", () => ({ loadEnrichedTranscripts: vi.fn() }));
+vi.mock("../data/videoSync.ts", async (original) => ({
+  ...(await original<typeof import("../data/videoSync.ts")>()),
+  loadVideoSync: vi.fn(),
+}));
 
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 beforeEach(() => {
+  vi.mocked(loadVideoSync).mockResolvedValue({ schemaVersion: 1, mappings: [] });
   vi.mocked(loadEnrichedTranscripts).mockResolvedValue({
     comm: [
       {
@@ -45,6 +52,41 @@ function renderPage() {
 }
 
 describe("comm test category filters", () => {
+  it("uses the pinned release for reviewed PAO audio and the selected uploaded video", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.mocked(loadEnrichedTranscripts).mockResolvedValue({
+      assetBase: "/assets/releases/baseline",
+      comm: [],
+      pao: [
+        {
+          t: "2026-04-01T18:03:00Z",
+          text: "Reviewed commentary.",
+          playback: {
+            source: "ia-pao",
+            feed: "pao",
+            recordingId: "ia-recording",
+            audio: { src: "comm/pao/recording.m4a", s: 12.5, d: 8 },
+            video: { id: "aaaaaaaaaaa", s: 102.5, d: 8, mappingId: "verified-map" },
+          },
+        },
+      ],
+    });
+    const { container } = renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Listen" }));
+    const audio = container.querySelector("audio");
+    expect(audio).toHaveAttribute("src", "/assets/releases/baseline/comm/pao/recording.m4a");
+    fireEvent.loadedMetadata(audio);
+    expect(audio.currentTime).toBe(12.5);
+    expect(screen.getByRole("link", { name: "Watch video" })).toHaveAttribute(
+      "href",
+      "https://www.youtube.com/watch?v=aaaaaaaaaaa&t=102s"
+    );
+    audio.currentTime = 20.5;
+    fireEvent.timeUpdate(audio);
+    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
+  });
+
   it("keeps Comm and PAO category selections independent, including Show all", async () => {
     renderPage();
     const comm = await screen.findByRole("group", { name: "Comm categories" });

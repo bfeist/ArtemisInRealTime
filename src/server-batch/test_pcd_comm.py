@@ -95,7 +95,7 @@ class PcdCommTests(unittest.TestCase):
         prepare.prepare_comm(self.mission)
         row = (self.mission.transcript_inputs / "comm.csv").read_text(encoding="utf-8").strip().split("|")
         self.assertEqual(row, ["2026-04-06T20:03:55.301000Z", "3.5", "2.5", "pcd/art002a000005.m4a", "[Koch] Thank you."])
-        sources = json.loads((self.mission.web_dir / "comm_sources.json").read_text())
+        sources = json.loads((self.mission.transcript_inputs / "comm_sources.json").read_text())
         self.assertEqual(sources[row[3]]["source_kind"], "crew_onboard")
         self.assertEqual(sources[row[3]]["transcript_source"], "pds_supplied")
         entry = json.loads((self.mission.transcript_inputs / "comm.json").read_text())[0]

@@ -2,57 +2,7 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import fs from "fs";
-import type { IncomingMessage, ServerResponse } from "node:http";
-
-function serveAsset(
-  req: IncomingMessage,
-  res: ServerResponse,
-  filePath: string,
-  contentType: string
-) {
-  const size = fs.statSync(filePath).size;
-  res.setHeader("Content-Type", contentType);
-  res.setHeader("Accept-Ranges", "bytes");
-  let start = 0;
-  let end = size - 1;
-  if (req.headers.range) {
-    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
-    if (!range || (!range[1] && !range[2])) {
-      res.statusCode = 416;
-      res.setHeader("Content-Range", `bytes */${size}`);
-      res.end();
-      return;
-    }
-    if (range[1]) {
-      start = Number(range[1]);
-      end = range[2] ? Math.min(Number(range[2]), end) : end;
-    } else {
-      start = Math.max(0, size - Number(range[2]));
-    }
-    if (
-      !Number.isSafeInteger(start) ||
-      !Number.isSafeInteger(end) ||
-      start > end ||
-      start >= size
-    ) {
-      res.statusCode = 416;
-      res.setHeader("Content-Range", `bytes */${size}`);
-      res.end();
-      return;
-    }
-    res.statusCode = 206;
-    res.setHeader("Content-Range", `bytes ${start}-${end}/${size}`);
-  }
-  res.setHeader("Content-Length", Math.max(0, end - start + 1));
-  if (req.method === "HEAD" || size === 0) {
-    res.end();
-    return;
-  }
-  const stream = fs.createReadStream(filePath, { start, end });
-  stream.on("error", () => res.destroy());
-  res.on("close", () => stream.destroy());
-  stream.pipe(res);
-}
+import { serveAsset } from "./src/server/serveAsset.ts";
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -120,22 +70,41 @@ export default defineConfig({
           ".m4a": "audio/mp4",
           ".mp3": "audio/mpeg",
           ".wav": "audio/wav",
+          ".mp4": "video/mp4",
+          ".webm": "video/webm",
+          ".gz": "application/gzip",
         };
         server.middlewares.use("/artemis-assets", (req, res, next) => {
           // Decode %20 etc. so filenames with spaces resolve on disk.
-          const decoded = decodeURIComponent(req.url ?? "");
-          const filePath = path.join(assetsDir, decoded);
-          const normalized = path.normalize(filePath);
-          if (!normalized.startsWith(assetsDir)) {
+          let decoded: string;
+          try {
+            decoded = decodeURIComponent((req.url ?? "").split("?")[0]);
+          } catch {
+            res.statusCode = 400;
+            res.end();
+            return;
+          }
+          const normalized = path.resolve(assetsDir, `.${decoded}`);
+          const relative = path.relative(assetsDir, normalized);
+          if (relative.startsWith("..") || path.isAbsolute(relative)) {
             res.statusCode = 403;
             res.end();
             return;
           }
           if (fs.existsSync(normalized) && fs.statSync(normalized).isFile()) {
+            const realRelative = path.relative(assetsDir, fs.realpathSync(normalized));
+            if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+              res.statusCode = 403;
+              res.end();
+              return;
+            }
             const ext = path.extname(normalized).toLowerCase();
             serveAsset(req, res, normalized, CONTENT_TYPES[ext] ?? "application/octet-stream");
           } else {
-            next();
+            // Asset misses must stay 404: the release resolver uses this to
+            // distinguish legacy roots from a malformed publication.
+            res.statusCode = 404;
+            res.end();
           }
         });
       },

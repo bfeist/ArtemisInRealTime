@@ -25,23 +25,36 @@ web files ready on F:, unneeded recordings, and pending PDS releases.
 "Unconfirmed" means no public-release evidence was found, not proof of privacy.
 "Ready on F" does not imply an upload to the remote production website.
 
+To upload prepared assets independently of application CI, run
+`.venv/Scripts/python.exe publish_assets.py` (both missions), or
+`refresh_assets.py --mission artemis-ii --stage publish` for one mission.
+This directly runs the existing rsync workflow through WSL on Windows and
+uses native rsync on Linux. `publish_assets.py --dry-run` is an optional
+preview. See [asset publication](docs/asset-publication.md).
+
 Each stage saves its log and input backups on D: under
 `artemis-ii/processed/refresh/`. `--only JOB ...` retries selected jobs; each
 stage has a lock preventing simultaneous runs. Metadata failures retain old
 IO/NASA catalogs and do not prevent independent sources from being checked.
 Builds stop on failed prerequisites. `run_all.py` and individual numbered
-scripts remain available for diagnostics; the legacy all-steps command also
-includes costly download/transcription work and is not the routine refresh.
+scripts remain available for diagnostics. With no `--step`, `run_all.py` runs
+only `routine-build` (`1c`, `1i`), with no HGX, ASR, downloads or uploads.
+
+For the preserved legacy baseline, pass `--dataset-manifest` to the build or
+publication command. The current accepted import is
+`F:/_repos/ArtemisInRealTime_assets/artemis-ii/processed/transcripts/datasets/legacy-20261107-v3/manifest.json`.
+See the [implementation report](docs/comm-consolidation-implementation.md) for
+the staged release, source differences, and measured PAO timing issues.
 
 New Flickr/NASA/EOL originals go to D:. Processing reads originals on either
 drive, keeping existing F: copies in place. Public compressed IA/PDS video
 is prepared under F:'s `web/` with separate indexes. PDS audio and supplied
 transcript originals stay in D:'s `raw/pds`; comm imports cache playback under
 `processed/comm_audio`, with normalized transcripts under `processed/transcripts`.
-Step `1c` prepares internal `inputs/comm.csv` and `inputs/comm.json` and publishes only the audio they
-reference under `web/comm`. After the indexes save successfully, it moves unused
-web audio back into the cache and records a reconciliation receipt in `processed/`.
-The routine build stage and all comm/PDS integration groups include this step.
+Step `1c` prepares private `inputs/comm.csv`, `comm.json`, source metadata and
+an audio manifest. It can upgrade cached PCD encodes, but does not publish,
+replace or retire web audio. `1i` stages a new immutable release; activation is
+separate. No retained release or shared video is deleted by this workflow.
 The generic media build does not create `web/audio`,
 `web/transcripts`, `audioPDS.json`, or `transcriptsPDS.json`. Same-drive IA MP4s
 use hard links; cross-drive PDS copies are verified
@@ -53,7 +66,11 @@ their numeric IDs can overlap existing IO/EOL records. Those aliases stay separa
 for comparison before merging. Verified PDS browse PNG/JPEG
 products fill gaps; raw scientific Bayer TIFFs are not used as display images.
 
-Publish the mission's `web/` folder. Keep `raw/` and `processed/`, including
+The direct rsync publisher mirrors the current mission `web` trees, including
+finalized releases and any local active pointer. Keep root photo/trajectory
+assets required by other views there too. Release manifests describe selected
+dependencies; rsync itself copies the web tree rather than enforcing those
+allowlists. Keep `raw/` and `processed/`, including
 the internal IO catalog and this report, out of production hosting. PDS SPICE
 release status is checked during discovery; supplied OEM trajectory inputs
 remain a separate source while SPICE is delayed.
@@ -137,10 +154,10 @@ The removed `VIDEO_ASSETS_DIR`, `PHOTO_ASSETS_DIR`, and `CREW_RAW_SOURCE_DIR`
 settings are replaced by the mission properties under `BULK_ASSETS_DIR` and
 `DATA_DIR`.
 
-## Running the full pipeline
+## Model-free default build
 
 ```bash
-uv run run_all.py --mission artemis-ii        # all steps
+uv run run_all.py --mission artemis-ii        # private inputs + staged release
 uv run run_all.py --mission artemis-i         # different mission
 ```
 
@@ -165,7 +182,7 @@ uv run run_all.py --mission artemis-ii --step photos-refresh
 uv run run_all.py --mission artemis-ii --step io-refresh
 
 # Classify, discover, verify, build and publish transcript history.
-uv run run_all.py --mission artemis-ii --step comm-history --hide-reasoning
+uv run run_all.py --mission artemis-ii --step comm-history --work-plan reviewed-plan.json --history-limit 10 --hide-reasoning
 ```
 
 `--list` shows all available groups alongside individual steps.
@@ -177,23 +194,62 @@ default. Classification uses HGX, `LLM-Alpha-512K` (GLM-5.3-Flash), low reasonin
 and a constrained JSON schema. Event discovery and verification consume these
 labels without routinely classifying the utterances again.
 
-After source transcription/import, run from the repository root:
+Create the impact plan from explicit current source rows before selecting model
+work (`prepare_dataset_inputs.py` emits `current-source-rows.jsonl` containing
+loader utterance records, not model output):
 
 ```powershell
-uv run --directory src/server-batch run_all.py --mission artemis-ii --step 1c 2k comm-history --backend hgx --model LLM-Alpha-512K --reasoning-effort low
+uv run python -m 1_comm.assessment_reuse --dataset-manifest <dataset>/manifest.json --current-jsonl current-source-rows.jsonl --output reviewed-plan.json --max-requests 10 --stages 1d 1e 1f
 ```
 
-Stages 1c and 2k prepare internal source transcripts under `processed/transcripts/inputs`.
-Stage 1i publishes enriched `transcripts.json`, `comm_enriched.csv` and
-`PAO_enriched.csv`; web views never fall back to plain transcript files.
-The ordinary all-steps run also prepares both inputs before classification.
-Processing outputs live under `1d_enrichment`, `1e_discovery`, `1f_investigation`,
-`1g_hierarchy`, `1h_web_timeline` and `1i_web_transcripts` in
-`processed/transcripts`. Each model stage checkpoints validated work promptly;
-incomplete runs stop before downstream publication. Repeat the same command to
-resume. `--history-limit N` limits pending work; `--retry-unresolved` explicitly
-retries exhausted event investigations in 1f. Existing completed assets and
-research are not moved or migrated by this refactor.
+Model stages require an explicit reviewed `--work-plan` tied to the current
+semantic revision and a positive `--history-limit`. Direct stages use `--limit`.
+The request cap applies **per model-stage invocation**, including repair/tool
+rounds and retries within that run;
+it is not a durable cumulative budget across restarts or stages. A multi-stage
+runner can spend the cap separately in each selected stage. Repeating a
+command authorizes another invocation. `--retry-unresolved` remains explicit.
+`2j` fallback ASR requires explicit selection plus `--input-dir`; `2k` is a
+legacy fallback operation, excluded from routine builds.
+
+### Preserve and publish an imported baseline
+
+Run these commands from `src/server-batch`, replacing the paths and IDs. Every
+import/snapshot output must be new. Review their reports before publication.
+
+```powershell
+uv run python -m 1_comm.transcript_dataset --legacy-root <processed-transcripts> --web-root <mission-web> --output <new-freeze-receipt.json> --inventory --hashes
+uv run python -m 1_comm.transcript_dataset --legacy-root <processed-transcripts> --web-root <mission-web> --output <new-dataset-dir>
+uv run python -m 1_comm.prepare_dataset_inputs --mission artemis-ii --dataset-manifest <new-dataset-dir>/manifest.json --output <new-input-snapshot>
+uv run python -m 1_comm.1i_web_transcripts --mission artemis-ii --dataset-manifest <new-dataset-dir>/manifest.json --release-id baseline-20261107
+uv run python -c "from pathlib import Path; from shared.web_release import verify_release; print(verify_release(Path('<mission-web>/releases/baseline-20261107')))"
+# Explicit first cutover: the baseline must preserve current root indexes.
+uv run python -m 1_comm.1i_web_transcripts --mission artemis-ii --activate-release baseline-20261107 --legacy-baseline baseline-20261107
+# Later activation, and rollback to a retained release:
+uv run python -m 1_comm.1i_web_transcripts --mission artemis-ii --activate-release next-release
+uv run python -m 1_comm.1i_web_transcripts --mission artemis-ii --activate-release baseline-20261107
+```
+
+Staging never changes `active-release.json`; activation verifies assets and commits
+that pointer last under a lock. The client pins one release per page session;
+reload after cutover. A missing pointer uses legacy root assets. Keep prior
+release directories and every referenced shared public video. `--include-exports`
+adds optional CSV downloads. `--sync-path` accepts private verified mappings with
+audio evidence, projected against the measured local upload-part manifest.
+
+Release JSON has deterministic `.json.gz` sidecars in the allowlist. The host
+must negotiate `Accept-Encoding: gzip`, serve JSON with `Content-Encoding: gzip`
+and `Vary: Accept-Encoding`, and retain uncompressed fallback. Sidecars alone do
+not enable HTTP negotiation. Production host/CDN configuration and actual CORS,
+Range/206, caching and compression checks remain required before remote cutover.
+The publisher never uploads or configures a production host.
+
+For already verified local PDS material, `--step comm-prepare` runs
+`7f -> 1b3 -> 1b4 -> 1c`; `pds-integrate` includes the photo rebuild too.
+Neither fetches the archive. `pds-plan` inventories/plans, while `pds-fetch` and
+`pds-refresh` explicitly select acquisition. `refresh_assets.py --stage build`
+also routes through both supplied-transcript importers before `1c` and stages
+`1i`; pass `--dataset-manifest` to publish the preserved imported projection.
 
 See the [communications pipeline](1_comm/README.md#transcript-classification-and-verified-history)
 for stage responsibilities, manifests, semantic validation and fixture tests.
@@ -211,7 +267,7 @@ uv run python -m 2_video.2g_web_video          --mission artemis-ii
 
 # Step 2h splits a downloaded MKV into 12-hour parts; step 2j transcribes them.
 # Step 2k auto-detects the stream start UTC by matching speech against the internal comm.csv,
-# removes comm duplicates, and writes web/combined_transcript.json.
+# legacy duplicate filtering writes private inputs/PAO.csv (explicit fallback only).
 uv run python -m 2_video.2h_split_mkv               --mission artemis-ii
 uv run python -m 2_video.2j_transcribe_yt           --mission artemis-ii \
     --input-dir "/path/to/yt_videos/artemis-ii"
@@ -255,13 +311,15 @@ uv run run_all.py --mission artemis-ii --list
 | ---- | -------------------------------- | ---------- |
 | 1a   | Download comm audio ZIPs         | artemis-ii |
 | 1b   | Transcribe comm audio (WhisperX) | artemis-ii |
-| 1c   | Prepare internal COMM transcripts and publish audio      | artemis-ii |
+| 1b3  | Import verified PDS PCD audio, supplied text and speakers | artemis-ii |
+| 1b4  | Import corrected PDS voice-loop text and clocks | artemis-ii |
+| 1c   | Prepare private COMM inputs and audio cache      | artemis-ii |
 | 1d   | Classify transcripts with constrained HGX schema | artemis-ii |
 | 1e   | Discover candidate events without changing labels | artemis-ii |
 | 1f   | Verify candidate events against original sources | artemis-ii |
 | 1g   | Build mission hierarchy from verified history | artemis-ii |
 | 1h   | Publish compact mission timeline after 1g | artemis-ii |
-| 1i   | Publish enriched comm/PAO JSON and CSVs without model requests | artemis-ii |
+| 1i   | Stage immutable comm/PAO release without model requests | artemis-ii |
 
 ### Video
 
@@ -272,9 +330,21 @@ uv run run_all.py --mission artemis-ii --list
 | 2d   | Fetch YouTube metadata              | all        |
 | 2e   | Download YouTube videos             | all        |
 | 2g   | Produce web-ready video JSON        | all        |
-| 2h   | Split MKV into 12-hour MP4 parts    | artemis-ii |
+| 2h   | Split MKV into 8-hour MP4 parts by default | artemis-ii |
 | 2j   | Transcribe YouTube parts (WhisperX) | artemis-ii |
 | 2k   | Align to UTC + de-duplicate vs comm | artemis-ii |
+
+`2j` and `2k` are explicit historical/fallback operations, not routine build
+steps. The replacement evidence and policy commands run directly, with their
+own required input/output paths; use `--help` on each script:
+
+| Script | Purpose |
+| --- | --- |
+| `2_video/2m_pao_sync.py` | Candidate source coverage and verified sync projection |
+| `2_video/2n_import_parts.py` | Import existing split/upload identities |
+| `2_video/2o_check_split_packets.py` | Measure original-to-split packet offsets |
+| `2_video/2p_pao_alignment.py` | Cached text comparison and bounded acoustic checks |
+| `2_video/2q_apply_pao_policy.py` | Apply reviewed playback policy to a new dataset |
 
 ### Photos — intake (per source, independent)
 
@@ -321,6 +391,10 @@ uv run run_all.py --mission artemis-ii --list
 | -------------- | --------------------------------- | -------------------------------------- |
 | photos-refresh | 3b 3e 3g_eol 3f 3h 4a 4b 4c 4d 4e | New photos on Flickr, NASA, or EOL     |
 | io-refresh     | 3a2 3a3 4c 4d 4e                  | IO adds records or corrects timestamps |
+| routine-build  | 1c 1i | Prepare private inputs and stage publication, without models |
+| comm-prepare   | 7f 1b3 1b4 1c | Import verified local PDS products into COMM inputs |
+| comm-publish   | 1i | Stage an accepted dataset or complete current assessments |
+| comm-history   | 1d 1e 1f 1g 1h 1i | Explicit bounded new research with a matching impact plan |
 
 ## Dependency management
 

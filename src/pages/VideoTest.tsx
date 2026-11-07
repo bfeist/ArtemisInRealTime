@@ -1,11 +1,11 @@
 import { JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./VideoTest.module.css";
+import { loadVideoParts, findVideoPart, type VideoPartCatalog } from "../data/videoSync.ts";
 
 // ── Hard-coded mission data ───────────────────────────────────────────────────
 // Stream start UTC from:
 //   ArtemisInRealTime_assets/artemis-ii/processed/transcripts/yt/_stream_start.json
 const STREAM_START_UTC = "2026-04-01T11:43:14.521Z";
-const STREAM_START_MS = Date.parse(STREAM_START_UTC);
 const LAUNCH_UTC = "2026-04-01T22:35:12Z"; // actual Artemis II liftoff (from config.py)
 const LAUNCH_MS = Date.parse(LAUNCH_UTC);
 
@@ -58,8 +58,12 @@ const PARTS: VideoPart[] = (() => {
   });
 })();
 
-const TOTAL_DURATION_S = PARTS.reduce((s, p) => s + p.durationS, 0);
-const STREAM_END_MS = STREAM_START_MS + TOTAL_DURATION_S * 1000;
+const LEGACY_CATALOG: VideoPartCatalog = {
+  schemaVersion: 1,
+  streamStartUtc: STREAM_START_UTC,
+  timingStatus: "candidate",
+  parts: PARTS,
+};
 
 const ASSETS_BASE = import.meta.env.DEV ? "/artemis-assets" : "https://media.artemisinrealtime.org";
 
@@ -124,13 +128,6 @@ function formatMet(startMs: number, nowMs: number): string {
   return `T${sign}${String(hrs).padStart(3, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
-function findPartForOffset(offsetS: number): VideoPart {
-  for (const p of PARTS) {
-    if (offsetS < p.startOffsetS + p.durationS) return p;
-  }
-  return PARTS[PARTS.length - 1];
-}
-
 function parseUtc(iso: string): number {
   return Date.parse(iso.endsWith("Z") ? iso : iso + "Z");
 }
@@ -146,7 +143,11 @@ function activePhase(phases: Phase[], nowMs: number): Phase | null {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-function VideoTest(): JSX.Element {
+function VideoTestPlayer({ catalog }: { catalog: VideoPartCatalog }): JSX.Element {
+  const PARTS = catalog.parts;
+  const STREAM_START_MS = Date.parse(catalog.streamStartUtc);
+  const TOTAL_DURATION_S = Math.max(...PARTS.map((part) => part.startOffsetS + part.durationS));
+  const STREAM_END_MS = STREAM_START_MS + TOTAL_DURATION_S * 1000;
   const [scrubMs, setScrubMs] = useState(STREAM_START_MS);
   const [playerReady, setPlayerReady] = useState(false);
   const [following, setFollowing] = useState(false);
@@ -218,7 +219,7 @@ function VideoTest(): JSX.Element {
       playerRef.current?.destroy();
       playerRef.current = null;
     };
-  }, []);
+  }, [PARTS]);
 
   // ── Poll video position while playing ──────────────────────────────────────
   useEffect(() => {
@@ -230,18 +231,19 @@ function VideoTest(): JSX.Element {
       setScrubMs(Math.min(newMs, STREAM_END_MS));
     }, 500);
     return () => clearInterval(id);
-  }, []);
+  }, [STREAM_START_MS, STREAM_END_MS]);
 
   // ── Seek video to a mission UTC instant ──────────────────────────────────
   const seekToMs = useCallback(
     (ms: number) => {
-      const clamped = Math.max(STREAM_START_MS, Math.min(STREAM_END_MS, ms));
+      const clamped = Math.max(STREAM_START_MS, Math.min(STREAM_END_MS - 1, ms));
       setScrubMs(clamped);
 
       if (!playerReady || !playerRef.current) return;
 
       const offsetS = (clamped - STREAM_START_MS) / 1000;
-      const part = findPartForOffset(offsetS);
+      const part = findVideoPart(PARTS, offsetS);
+      if (!part) return;
       const seekS = Math.max(0, offsetS - part.startOffsetS);
 
       if (activePartRef.current.partNum !== part.partNum) {
@@ -251,12 +253,12 @@ function VideoTest(): JSX.Element {
         playerRef.current.seekTo(seekS, true);
       }
     },
-    [playerReady]
+    [playerReady, PARTS, STREAM_START_MS, STREAM_END_MS]
   );
 
   const currentPart = useMemo(
-    () => findPartForOffset((scrubMs - STREAM_START_MS) / 1000),
-    [scrubMs]
+    () => findVideoPart(PARTS, (scrubMs - STREAM_START_MS) / 1000),
+    [scrubMs, PARTS, STREAM_START_MS]
   );
 
   const currentPhase = useMemo(() => activePhase(phases, scrubMs), [phases, scrubMs]);
@@ -300,20 +302,24 @@ function VideoTest(): JSX.Element {
         <div className={styles.statCard}>
           <div className={styles.statLabel}>Part</div>
           <div className={styles.statBig}>
-            {currentPart.partNum} / {PARTS.length}
+            {currentPart?.partNum ?? "No video"} / {PARTS.length}
           </div>
         </div>
         <div className={styles.statCard}>
           <div className={styles.statLabel}>Video</div>
           <div className={styles.statBig}>
-            <a
-              href={`https://youtu.be/${currentPart.videoId}`}
-              target="_blank"
-              rel="noreferrer"
-              className={styles.vidLink}
-            >
-              {currentPart.videoId}
-            </a>
+            {currentPart ? (
+              <a
+                href={`https://youtu.be/${currentPart.videoId}`}
+                target="_blank"
+                rel="noreferrer"
+                className={styles.vidLink}
+              >
+                {currentPart.videoId}
+              </a>
+            ) : (
+              "No mapped video"
+            )}
           </div>
         </div>
       </div>
@@ -402,7 +408,7 @@ function VideoTest(): JSX.Element {
         <div className={styles.partTicks}>
           {PARTS.map((p) => {
             const pct = (p.startOffsetS / TOTAL_DURATION_S) * 100;
-            const isActive = currentPart.partNum === p.partNum;
+            const isActive = currentPart?.partNum === p.partNum;
             return (
               <div
                 key={p.partNum}
@@ -466,13 +472,39 @@ function VideoTest(): JSX.Element {
         <div className={styles.timelineLabels}>
           <span>{formatUtc(STREAM_START_MS)}</span>
           <span className={styles.timelineLabelCenter}>
-            Part {currentPart.partNum} — {formatUtc(scrubMs)}
+            Part {currentPart?.partNum ?? "—"} — {formatUtc(scrubMs)}
           </span>
           <span>{formatUtc(STREAM_END_MS)}</span>
         </div>
       </div>
     </div>
   );
+}
+
+function VideoTest(): JSX.Element {
+  const [catalog, setCatalog] = useState<VideoPartCatalog | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadVideoParts(`${ASSETS_BASE}/artemis-ii/web`, LEGACY_CATALOG)
+      .then((value) => {
+        if (!cancelled) setCatalog(value);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (error)
+    return (
+      <div className={styles.page} role="alert">
+        Unable to load video: {error}
+      </div>
+    );
+  if (!catalog) return <div className={styles.page}>Loading video coverage…</div>;
+  return <VideoTestPlayer catalog={catalog} />;
 }
 
 export default VideoTest;

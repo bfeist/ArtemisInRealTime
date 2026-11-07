@@ -1,5 +1,106 @@
 # Pipeline 2: Video (IA + YouTube)
 
+## Current operations and PAO review gates
+
+Video intake, distribution, PAO text authority, synchronization, and publication
+are separate operations. Routine publication reuses existing video IDs and cached
+text; it must not invoke `2e`, `2h`, `2i`, `2j`, or legacy `2k`. The diagrams and
+legacy stage descriptions below document the earlier acquisition workflow.
+`2j` is an explicitly selected ASR fallback for a demonstrated cache/text gap.
+`2k` is retained as historical audit/recovery code, not the default PAO preparation
+path. Its global speaker promotion can conflate diarization IDs across parts;
+never use those removals as coverage evidence or apply them to the canonical PAO
+sequence. Broadcast repetitions remain distinct occurrences.
+
+The replacement operations run from `src/server-batch`:
+
+| Operation | Command | Result |
+| --- | --- | --- |
+| Candidate coverage plan | `uv run 2_video/2m_pao_sync.py --help` | Explicit nonoverlapping per-feed intervals, IA preferred within actual recording durations; YouTube exceptions and unknown intervals remain explicit. |
+| Existing part/upload import | `uv run 2_video/2n_import_parts.py --help` | Probe existing MP4s and import filename-to-upload IDs with state hash provenance. No upload or split is performed. |
+| Original-to-part packet check | `uv run 2_video/2o_check_split_packets.py --help` | Compare bounded AAC packet hashes to measure stream-copy cut offsets. This verifies media identity, not mission UTC. |
+| Bidirectional text/audio study | `uv run 2_video/2p_pao_alignment.py --help` | Unique ordered text candidates, repeated-phrase ambiguities, unmatched IA phrases and timed unanchored YouTube runs; optional bounded local acoustic checks. |
+| Apply reviewed playback policy | `uv run 2_video/2q_apply_pao_policy.py --help` | Clone a pinned canonical dataset into a new processed directory, retaining accepted text, UTC, UIDs, assessments and history while changing reviewed playback metadata. No activation occurs. |
+
+These commands refuse to replace prior evidence and write new artifacts only
+under `processed`. `2m` also supports stdout for a read-only preview. Example
+local study (choose a new report filename each time):
+
+```powershell
+uv run 2_video/2p_pao_alignment.py `
+  --ia-dir F:/_repos/ArtemisInRealTime_assets/artemis-ii/processed/transcripts/comm `
+  --yt-dir F:/_repos/ArtemisInRealTime_assets/artemis-ii/processed/transcripts/yt `
+  --part-manifest F:/_repos/ArtemisInRealTime_assets/artemis-ii/processed/pao_sync/video-parts-measured-manifest.json `
+  --stream-start-utc 2026-04-01T11:43:14.521Z `
+  --raw-ia-dir F:/_repos/ArtemisInRealTime_assets/artemis-ii/raw/comm `
+  --parts-dir D:/chunks --acoustic-limit 50 `
+  --output F:/_repos/ArtemisInRealTime_assets/artemis-ii/processed/pao_sync/new-study.json
+```
+
+The exact ten-token study uses unfiltered saved YouTube transcripts, with tokens
+contiguous across segments but scoped to each part. A unique text match is a
+candidate, never a verified playback mapping. Acoustic checks decode only bounded
+mono windows, use normalized cross-correlation, reject weak or ambiguous peaks,
+and verify only the sampled interval. `--lowpass-hz 450` can independently check
+resampled audio without reducing the correlation threshold. Neither a single
+sample nor packet identity verifies a whole recording, a UTC clock, or a handoff.
+
+The 2026-11-07 local study found all 29 uploaded parts at `D:/chunks`, including
+`.yt_upload_state.json`. Their first AAC packet sequences match the original MKV.
+Actual cuts precede requested eight-hour cuts by about 0.26–3.21 seconds; the last
+part's measured original offset is 806399.194011 seconds. Legacy cumulative
+duration seeking starts that part at 806438.738273 seconds, about **39.54 seconds
+late**. The public candidate catalog deliberately records the compatibility clock
+separately from measured original offsets. Do not label cumulative durations or
+nominal `28800 * (part - 1)` offsets as verified original-video timing.
+
+The cached-text comparison found 6,900 unique exact anchors, 815 ambiguous IA
+phrases and 1,342 unmatched eligible IA phrases. Unmatched text does not by itself
+prove an audio gap. Two 50-window acoustic studies (waveform and 450 Hz lowpass)
+verified four distinct bounded passages. With measured part offsets, the existing
+YouTube UTC baseline places those passages about **10.45–11.33 seconds earlier**
+than the IA clock. Opening/closing checks remain unverified. Preserve existing
+video/source behavior until reviewed clock and source boundaries establish what
+that discrepancy means; no mission-wide IA handoff was approved by these checks.
+
+Private evidence is under `processed/pao_sync/`: `video-parts-manifest.json`,
+`split-packet-evidence.json`, `video-parts-measured-manifest.json`,
+`text-coverage-study-final.json`, `alignment-study.json`, and
+`alignment-study-lowpass.json`. `video-parts.json` is the compact candidate
+catalog; compact sync output includes only explicitly verified audio-evidenced
+pieces with an exact uploaded ID and valid measured duration.
+
+### Reviewed application contract
+
+`2q` requires `--dataset-manifest`, `--coverage-manifest`, `--sync-manifest`,
+`--part-manifest`, and a new `--output` directory. IA selections also require
+`--audio-root` containing the reviewed public derivative. Coverage must have
+`schemaVersion: 1`, `status: "reviewed"`, `review: {reviewer, reference}`, and nonoverlapping
+`intervals` with `feed`, `startUtc`, `endUtc`, `source`, `recordingId`,
+`verification: "verified"`, and `reviewReference`. Unknown intervals retain the
+old selection. Reviewed IA `recordings` additionally provide `startUtc`,
+`durationSeconds`, `audioPath` under `comm/`, `verification`, and `reviewReference`.
+An optional `audioSha256` binds the reviewed derivative's exact bytes. Application
+resolves each derivative inside `--audio-root`, rejects missing/empty files and
+hash mismatches, and pins actual hashes and byte counts in the receipt.
+Each selected utterance needs a verified audio-evidenced video piece, or an
+explicit `videoStatus: "unavailable"` for IA-only playback. YouTube selections
+always need a verified uploaded playback mapping. Timed utterances crossing a
+reviewed boundary fail validation rather than being split or silently dropped.
+
+Application adds `playback: {source, recordingId, feed, audio?: {src, s, d},
+video?: {id, s, d, mappingId}}` to canonical and corresponding published PAO rows.
+Playback duration is bounded by the utterance duration when known, policy end,
+verified sync end, and recording end. Video duration uses the piece's media rate.
+Assessment/history artifacts remain byte-for-byte copies; the new manifest pins
+updated projection hashes and a receipt with all input hashes. This is a
+playback-only migration. Restored or revised speech requires a separate semantic
+revision and selective assessment through the shared impact planner. The `1i`
+publisher validates referenced playback bytes, and Comm Test consumes these
+audio/video selections. A staged dataset still requires release validation
+before activation. No reviewed policy has been applied to the actual mission
+dataset.
+
 ## Data Flow
 
 ```
@@ -264,7 +365,9 @@ Produces web-ready JSON from IA and YouTube metadata. IA timestamps come directl
 
 Splits a large MKV into YouTube-ready MP4 chunks using stream copy (default) or NVENC transcode (`--transcode`). Timestamps are reset to 0:00:00 per chunk and the moov atom is placed at the front (`faststart`) for fast YouTube ingest. Default chunk size is 8 hours.
 
-Each output part JSON (written by step 2j) includes a `duration` field that 2k reads to compute exact cumulative offsets — chunk size is not assumed to be uniform.
+Each output part JSON (written by step 2j) includes a `duration` field. Cumulative
+durations describe the legacy player clock; they are not exact original-media
+offsets because stream-copy parts can overlap. Use the measured part manifest.
 
 ```bash
 uv run 2_video/2h_split_mkv.py --input "D:/NASA Artemis II Live Mission Coverage m3kR2KK8TEs.mkv"
@@ -299,7 +402,9 @@ uv run 2_video/2i_yt_upload.py --input-dir "D:/chunks" --dry-run  # preview with
 | **Idempotent** | Yes — skips parts whose JSON already exists                                |
 | **Requires**   | WhisperX, Pyannote (`speaker-diarization-3.1`), GPU recommended            |
 
-Runs WhisperX ASR + forced alignment + speaker diarization on each MP4 chunk. Saves one JSON per part containing file-relative segment timestamps, speaker labels, and a `duration` field (actual audio length in seconds). No UTC alignment is done here — run step 2k afterwards.
+Explicit fallback only: runs WhisperX ASR + forced alignment + speaker diarization
+on selected MP4 chunks. Saves file-relative segments and durations. Reuse existing
+caches in `2m`/`2p`; do not follow transcription with routine destructive `2k`.
 
 ```bash
 uv run run_all.py --mission artemis-ii --step 2j
@@ -307,7 +412,12 @@ uv run run_all.py --mission artemis-ii --step 2j
 uv run python -m 2_video.2j_transcribe_yt --mission artemis-ii
 ```
 
-### 2k: Filter YT Transcript (`2k_filter_yt_transcript.py`)
+### Historical 2k: Filter YT Transcript (`2k_filter_yt_transcript.py`)
+
+The following describes historical behavior for audit/recovery. It is not the
+recommended source-authority or synchronization operation. In particular,
+speaker-cluster promotion below is deprecated and its deletions are not evidence
+that speech is safely represented elsewhere.
 
 |                |                                                                                  |
 | -------------- | -------------------------------------------------------------------------------- |
@@ -379,7 +489,10 @@ uv run python -m 2_video.2k_filter_yt_transcript --mission artemis-ii \
 
 **Minimum order**: `2a` → `2b` → `2f` + `2d` (parallel OK) → `2e` → `2g`
 
-**Upload sub-pipeline**: `2e` → `2h` → `2i` (upload) + `2j` (transcribe) → `2k` (filter + web output)
+**Distribution only**: explicit `2e` → `2h` → `2i` when new media is needed.
+**Existing PAO evidence**: `2n`/`2o` part identity plus `2m`/`2p` review; `2q`
+applies only approved playback authority to a staged canonical dataset.
+`2j`/`2k` remain explicit fallback/historical operations, outside this routine flow.
 
 ## How to Run
 
